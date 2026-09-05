@@ -1,0 +1,41 @@
+
+#implementing Balance reconciliation For missing transaction, duplicate transaction, sign errors and etc.
+def balance_reconciliation(opening_b, debit, credit, closing_b):
+    expected = opening_b + credit - debit
+    difference = closing_b - expected
+
+    return {
+        "expected_closing": expected,
+        "reported_closing": closing_b,
+        "difference": difference,
+        "valid": abs(difference) < 0.01
+    }
+
+
+
+def debit_credit_validation(debits, credits):
+    total_debit = sum(debits)
+    total_credit = sum(credits)
+    difference = total_debit - total_credit
+
+    return {
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "difference": difference,
+        "valid": abs(difference) < 0.01
+    }
+
+#this will mapping every id with name through mapping_list.py
+def validate_mapping(source_value, mapping_table):
+    if source_value in mapping_table:
+        return {
+            "status": "PASS",
+            "source": source_value,
+            "target": mapping_table[source_value]
+        }
+
+    return {
+        "status": "NEEDS_REVIEW",
+        "source": source_value,
+        "target": None
+    }
