@@ -11,6 +11,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import { api, type ChatHistoryMessage, type CorpusCategory, type IngestMode, type PipelineRunResponse, type PipelineSketchResponse, type PipelineStepResult, type SourceRef, type StatusResponse } from "./api";
 
@@ -33,6 +34,17 @@ const CATEGORY_LABELS: Record<CorpusCategory, string> = {
   mapping: "Mapping rules",
   output: "Target output",
 };
+
+/** Chips are keyed category:sheet — collapse duplicate chunks of one sheet. */
+function uniqueSources(sources: SourceRef[]): SourceRef[] {
+  const seen = new Set<string>();
+  return sources.filter((s) => {
+    const key = `${s.category}:${s.sheet}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -299,7 +311,7 @@ function AskTab({ status }: { status: StatusResponse | null }) {
             </div>
             {m.sources && m.sources.length > 0 && (
               <div className="sources">
-                {m.sources.map((s) => (
+                {uniqueSources(m.sources).map((s) => (
                   <span key={`${s.category}-${s.sheet}`} className="source-chip" title={`${s.category} · relevance ${s.score}`}>
                     {s.category}:{s.sheet}
                   </span>
@@ -480,6 +492,7 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
   const [running, setRunning] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<StepFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [flow, setFlow] = useState<ReactFlowInstance<StepFlowNode, Edge> | null>(null);
 
   const onParamsChange = useCallback((stepId: string, text: string) => {
     setParamsDraft((prev) => ({ ...prev, [stepId]: text }));
@@ -526,7 +539,12 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
     setRunResults({});
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [sketch, onParamsChange, setNodes, setEdges]);
+    // The canvas initializes (and its fitView runs) with zero nodes; the
+    // sketch arrives seconds later, so re-fit once the graph exists or the
+    // nodes land outside the visible viewport.
+    const refit = setTimeout(() => flow?.fitView({ padding: 0.2 }), 50);
+    return () => clearTimeout(refit);
+  }, [sketch, onParamsChange, setNodes, setEdges, flow]);
 
   // Push param edits / run results into existing nodes (positions preserved).
   useEffect(() => {
@@ -620,7 +638,10 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onInit={setFlow}
           fitView
+          fitViewOptions={{ padding: 0.2 }}
+          minZoom={0.1}
         >
           <Background />
           <Controls />
@@ -648,7 +669,7 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
           <ReactMarkdown>{sketch.explanation}</ReactMarkdown>
           {sketch.sources.length > 0 && (
             <div className="sources">
-              {sketch.sources.map((s) => (
+              {uniqueSources(sketch.sources).map((s) => (
                 <span key={`${s.category}-${s.sheet}`} className="source-chip" title={`${s.category} · relevance ${s.score}`}>
                   {s.category}:{s.sheet}
                 </span>
