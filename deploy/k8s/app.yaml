@@ -61,7 +61,9 @@ metadata:
   labels:
     app: app
 spec:
-  type: LoadBalancer
+  # ClusterIP only — no public load balancer (hackathon guide: "DO secure all
+  # your open ports"). Access the UI with: kubectl port-forward svc/app 8080:80
+  type: ClusterIP
   selector:
     app: app
   ports:
