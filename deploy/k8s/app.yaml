@@ -1,0 +1,70 @@
+# App = Node server (API) + built React UI served from the same process.
+#
+# Vertex AI access: pods authenticate with the node's service account — the
+# default compute SA 394788628847-compute@developer.gserviceaccount.com (no
+# custom Workload Identity setup). It needs roles/aiplatform.user on the
+# project:
+#   gcloud projects add-iam-policy-binding priv-mkt-hack26lon-3752 \
+#     --member=serviceAccount:394788628847-compute@developer.gserviceaccount.com \
+#     --role=roles/aiplatform.user
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          # Replaced by Cloud Build (see cloudbuild.yaml deploy step)
+          image: APP_IMAGE
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: GCP_PROJECT_ID
+              value: "priv-mkt-hack26lon-3752"
+            - name: VERTEX_LOCATION
+              value: "europe-west2"
+            - name: QDRANT_URL
+              value: "http://qdrant:6333"
+            - name: ENGINE_URL
+              value: "http://engine:8080"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  type: LoadBalancer
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

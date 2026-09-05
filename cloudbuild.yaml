@@ -1,0 +1,86 @@
+# Cloud Build pipeline: build app + engine images, push to Artifact Registry,
+# deploy to GKE.
+#
+# Prerequisites (one-time, not automated here):
+#   - Artifact Registry repo:  gcloud artifacts repositories create ylookup \
+#       --repository-format=docker --location=europe-west2
+#   - GKE cluster; pods use the node's default compute SA
+#     (394788628847-compute@developer.gserviceaccount.com) — grant it
+#     roles/aiplatform.user for Vertex AI access (see deploy/k8s/app.yaml)
+#   - The build runs as the default compute SA too; it needs
+#     roles/container.developer + roles/artifactregistry.writer
+#     (+ roles/storage.admin on the build bucket if not already granted)
+#
+# Trigger manually with:
+#   gcloud builds submit --project=priv-mkt-hack26lon-3752 \
+#     --service-account=projects/priv-mkt-hack26lon-3752/serviceAccounts/394788628847-compute@developer.gserviceaccount.com
+
+substitutions:
+  _REGION: europe-west2
+  _CLUSTER: ylookup-gke
+  _AR_REPO: ylookup
+
+options:
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
+
+steps:
+  # ---- Build the app image (web + server, root Dockerfile) ----
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app:latest
+      - .
+
+  # ---- Build the engine image (Python deterministic engine) ----
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine:latest
+      - -f
+      - engine/Dockerfile
+      - engine
+
+  # ---- Push both images ----
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine
+
+  # ---- Deploy to GKE: pin images to this commit, then apply manifests ----
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        gcloud container clusters get-credentials ${_CLUSTER} \
+          --region ${_REGION} --project $PROJECT_ID
+        sed -i \
+          -e "s|APP_IMAGE|${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app:$COMMIT_SHA|g" \
+          deploy/k8s/app.yaml
+        sed -i \
+          -e "s|ENGINE_IMAGE|${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine:$COMMIT_SHA|g" \
+          deploy/k8s/engine.yaml
+        kubectl apply -f deploy/k8s/
+        kubectl rollout status deployment/app --timeout=300s
+        kubectl rollout status deployment/engine --timeout=300s
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app:latest
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/engine:latest
