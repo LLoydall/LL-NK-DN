@@ -20,36 +20,47 @@ const MAPPING = {
 
 describe("parseWorkbookBuffer", () => {
   it("parses an .xlsx buffer into sheet documents", () => {
-    const loaded = parseWorkbookBuffer(workbookBuffer(MAPPING), "mapping.xlsx");
+    const loaded = parseWorkbookBuffer(workbookBuffer(MAPPING), "mapping.xlsx", "mapping");
     expect(loaded.sourceLabel).toBe("mapping.xlsx");
+    expect(loaded.category).toBe("mapping");
     expect(loaded.sheetCount).toBe(1);
     // Overview card + row document for the single sheet.
     expect(loaded.documents).toHaveLength(2);
     expect(loaded.documents[1].content).toContain("Source LE: Fund A | Target LE: LE-001");
+    expect(loaded.documents.every((d) => d.metadata.category === "mapping")).toBe(true);
+  });
+
+  it("threads the category into every document", () => {
+    const loaded = parseWorkbookBuffer(workbookBuffer(MAPPING), "gl.xlsx", "input");
+    expect(loaded.category).toBe("input");
+    expect(loaded.documents.every((d) => d.metadata.category === "input")).toBe(true);
   });
 
   it("rejects a corrupt .xlsx buffer", () => {
     // SheetJS tolerates plain text (parses it as CSV) but a truncated zip is
     // an unreadable workbook.
     const truncated = workbookBuffer(MAPPING).subarray(0, 200) as Buffer;
-    expect(() => parseWorkbookBuffer(truncated, "bad.xlsx")).toThrow();
+    expect(() => parseWorkbookBuffer(truncated, "bad.xlsx", "mapping")).toThrow();
   });
 
   it("rejects buffers over MAX_FILE_BYTES", () => {
     const tooBig = Buffer.alloc(config.MAX_FILE_BYTES + 1);
-    expect(() => parseWorkbookBuffer(tooBig, "big.xlsx")).toThrow(/too large/);
+    expect(() => parseWorkbookBuffer(tooBig, "big.xlsx", "mapping")).toThrow(/too large/);
   });
 });
 
 describe("loadUploadedWorkbook", () => {
   it("uses the sanitized originalname as the source label", () => {
     for (const originalname of ["../../etc/mapping.xlsx", "C:\\uploads\\mapping.xlsx"]) {
-      const loaded = loadUploadedWorkbook(workbookBuffer(MAPPING), originalname);
+      const loaded = loadUploadedWorkbook(workbookBuffer(MAPPING), originalname, "output");
       expect(loaded.sourceLabel).toBe("mapping.xlsx");
+      expect(loaded.category).toBe("output");
     }
   });
 
   it("rejects non-.xlsx uploads", () => {
-    expect(() => loadUploadedWorkbook(workbookBuffer(MAPPING), "mapping.csv")).toThrow(/\.xlsx/);
+    expect(() => loadUploadedWorkbook(workbookBuffer(MAPPING), "mapping.csv", "mapping")).toThrow(
+      /\.xlsx/,
+    );
   });
 });

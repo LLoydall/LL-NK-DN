@@ -1,7 +1,24 @@
 import * as XLSX from "xlsx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearUploads, uploadData } from "./engineClient.js";
 import type { IndexMetadata } from "./rag/store.js";
 import { MigrationService } from "./service.js";
+
+// The engine is an external service; mock the client module (keeping the real
+// error classes) so no HTTP calls happen.
+vi.mock("./engineClient.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./engineClient.js")>();
+  return {
+    ...actual,
+    checkBatch: vi.fn(),
+    clearUploads: vi.fn(async () => {}),
+    getOperators: vi.fn(),
+    runPipeline: vi.fn(),
+    uploadData: vi.fn(async () => ({ ok: true, name: "x.xlsx", bytes: 1 })),
+    validateMapping: vi.fn(),
+    validatePipeline: vi.fn(),
+  };
+});
 
 function workbookBuffer(name: string): Buffer {
   const workbook = XLSX.utils.book_new();
@@ -16,30 +33,70 @@ function workbookBuffer(name: string): Buffer {
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+/** Workbook with the full reference sheet set (engine crosswalk reload). */
+function mappingWorkbookBuffer(): Buffer {
+  const workbook = XLSX.utils.book_new();
+  for (const sheet of [
+    "LE Mapping",
+    "Investor Mapping",
+    "Deal Mapping",
+    "CoA Mapping",
+    "Batch Preference",
+  ]) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["A", "B"],
+        ["x", "y"],
+      ]),
+      sheet,
+    );
+  }
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
 /** In-memory stand-in for RuleIndex; no Qdrant or embeddings calls. */
 function fakeIndex() {
   const sources: IndexMetadata[] = [];
   return {
     sources,
-    addAll: vi.fn(async (chunks: unknown[], sourceLabel: string, documentCount: number) => {
-      sources.push({
-        sourceLabel,
-        ingestedAt: new Date().toISOString(),
-        documentCount,
-        chunkCount: chunks.length,
-        embeddingModel: "fake",
-      });
-    }),
-    replaceAll: vi.fn(async (chunks: unknown[], sourceLabel: string, documentCount: number) => {
-      sources.length = 0;
-      sources.push({
-        sourceLabel,
-        ingestedAt: new Date().toISOString(),
-        documentCount,
-        chunkCount: chunks.length,
-        embeddingModel: "fake",
-      });
-    }),
+    addAll: vi.fn(
+      async (
+        chunks: unknown[],
+        sourceLabel: string,
+        documentCount: number,
+        _embeddingModel: string,
+        category: IndexMetadata["category"],
+      ) => {
+        sources.push({
+          sourceLabel,
+          category,
+          ingestedAt: new Date().toISOString(),
+          documentCount,
+          chunkCount: chunks.length,
+          embeddingModel: "fake",
+        });
+      },
+    ),
+    replaceAll: vi.fn(
+      async (
+        chunks: unknown[],
+        sourceLabel: string,
+        documentCount: number,
+        _embeddingModel: string,
+        category: IndexMetadata["category"],
+      ) => {
+        sources.length = 0;
+        sources.push({
+          sourceLabel,
+          category,
+          ingestedAt: new Date().toISOString(),
+          documentCount,
+          chunkCount: chunks.length,
+          embeddingModel: "fake",
+        });
+      },
+    ),
     ping: vi.fn(async () => true),
     stats: vi.fn(async () => ({
       documentCount: sources.reduce((sum, m) => sum + m.documentCount, 0),
@@ -71,6 +128,8 @@ describe("MigrationService ingest modes", () => {
   beforeEach(() => {
     index = fakeIndex();
     service = serviceWithIndex(index);
+    vi.mocked(uploadData).mockClear();
+    vi.mocked(clearUploads).mockClear();
   });
 
   it("append mode accumulates sources across two ingests", async () => {
@@ -112,6 +171,23 @@ describe("MigrationService ingest modes", () => {
     expect(status.index?.sourceLabel).toBe("b.xlsx");
   });
 
+  it("threads the ingest category into sources and the status summary", async () => {
+    const gl = await service.ingest(
+      { buffer: workbookBuffer("GL"), originalname: "gl.xlsx" },
+      "append",
+      "input",
+    );
+    expect(gl.category).toBe("input");
+    await service.ingest({ buffer: workbookBuffer("A"), originalname: "a.xlsx" }, "append");
+
+    const status = await service.status();
+    expect(status.sources.map((s) => s.category)).toEqual(["input", "mapping"]);
+    expect(status.index?.byCategory.input.sources).toBe(1);
+    expect(status.index?.byCategory.mapping.sources).toBe(1);
+    expect(status.index?.byCategory.output.sources).toBe(0);
+    expect(status.index?.byCategory.input.chunks).toBe(gl.chunkCount);
+  });
+
   it("reports an empty corpus when nothing is ingested", async () => {
     const status = await service.status();
     expect(status.ready).toBe(false);
@@ -135,5 +211,56 @@ describe("MigrationService ingest modes", () => {
     ).rejects.toThrow(/already in progress/);
     release();
     await first;
+  });
+});
+
+describe("MigrationService engine sync", () => {
+  let index: ReturnType<typeof fakeIndex>;
+  let service: MigrationService;
+
+  beforeEach(() => {
+    index = fakeIndex();
+    service = serviceWithIndex(index);
+    vi.mocked(uploadData).mockClear();
+  });
+
+  it("pushes the workbook to the engine under its basename", async () => {
+    const result = await service.ingest(
+      { buffer: workbookBuffer("A"), originalname: "uploads/gl.xlsx" },
+      "append",
+      "input",
+    );
+
+    expect(result.engineSync).toBe(true);
+    expect(uploadData).toHaveBeenCalledOnce();
+    const [name, data, opts] = vi.mocked(uploadData).mock.calls[0];
+    expect(name).toBe("gl.xlsx");
+    expect(Buffer.isBuffer(data)).toBe(true);
+    // Only an LE Mapping sheet — not the full reference set.
+    expect(opts).toEqual({ asMapping: false });
+  });
+
+  it("asks the engine to reload crosswalks when a full mapping workbook is ingested", async () => {
+    await service.ingest(
+      { buffer: mappingWorkbookBuffer(), originalname: "mapping.xlsx" },
+      "append",
+      "mapping",
+    );
+
+    expect(vi.mocked(uploadData).mock.calls[0][2]).toEqual({ asMapping: true });
+  });
+
+  it("reports engineSync false instead of failing when the engine is down", async () => {
+    vi.mocked(uploadData).mockRejectedValueOnce(new Error("engine unreachable"));
+    const result = await service.ingest(
+      { buffer: workbookBuffer("A"), originalname: "a.xlsx" },
+      "append",
+    );
+    expect(result.engineSync).toBe(false);
+  });
+
+  it("clears engine uploads with the index", async () => {
+    await service.clearIndex();
+    expect(clearUploads).toHaveBeenCalledOnce();
   });
 });

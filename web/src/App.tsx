@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { api, type ChatHistoryMessage, type IngestMode, type SourceRef, type StatusResponse } from "./api";
+import {
+  Background,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import { api, type ChatHistoryMessage, type CorpusCategory, type IngestMode, type PipelineRunResponse, type PipelineSketchResponse, type PipelineStepResult, type SourceRef, type StatusResponse } from "./api";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -16,9 +28,15 @@ const SUGGESTED_QUESTIONS = [
   "How are investors mapped to the target system?",
 ];
 
+const CATEGORY_LABELS: Record<CorpusCategory, string> = {
+  input: "Source input",
+  mapping: "Mapping rules",
+  output: "Target output",
+};
+
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [tab, setTab] = useState<"ask" | "review">("ask");
+  const [tab, setTab] = useState<"ask" | "pipeline" | "review">("ask");
 
   const refreshStatus = useCallback(() => {
     api.status().then(setStatus).catch(() => setStatus(null));
@@ -75,12 +93,20 @@ export default function App() {
               <dd>{status.index.chunkCount.toLocaleString()}</dd>
               <dt>Sources</dt>
               <dd>{status.sources.length}</dd>
+              <dt>By category</dt>
+              <dd>
+                {(Object.keys(CATEGORY_LABELS) as CorpusCategory[])
+                  .filter((c) => status.index?.byCategory[c].sources)
+                  .map((c) => `${CATEGORY_LABELS[c]}: ${status.index?.byCategory[c].chunks.toLocaleString()} chunks`)
+                  .join(" · ") || "—"}
+              </dd>
             </dl>
             <ul className="source-list">
               {status.sources.map((s, i) => (
                 <li key={`${s.sourceLabel}-${i}`}>
                   <span className="mono break">{s.sourceLabel}</span>
                   <span className="source-meta">
+                    <span className={`category-badge ${s.category}`}>{CATEGORY_LABELS[s.category]}</span>{" "}
                     {s.chunkCount.toLocaleString()} chunks · {new Date(s.ingestedAt).toLocaleString()}
                   </span>
                 </li>
@@ -98,11 +124,14 @@ export default function App() {
           <button className={tab === "ask" ? "active" : ""} onClick={() => setTab("ask")}>
             Ask
           </button>
+          <button className={tab === "pipeline" ? "active" : ""} onClick={() => setTab("pipeline")}>
+            Pipeline
+          </button>
           <button className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
             Review queue
           </button>
         </div>
-        {tab === "ask" ? <AskTab status={status} /> : <ReviewTab />}
+        {tab === "ask" ? <AskTab status={status} /> : tab === "pipeline" ? <PipelineTab status={status} /> : <ReviewTab />}
       </main>
     </div>
   );
@@ -111,9 +140,11 @@ export default function App() {
 function IngestPanel({ onIngested }: { onIngested: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<IngestMode>("append");
+  const [category, setCategory] = useState<CorpusCategory>("mapping");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
+  const [engineWarning, setEngineWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function submit(e: React.FormEvent) {
@@ -122,16 +153,22 @@ function IngestPanel({ onIngested }: { onIngested: () => void }) {
     setLoading(true);
     setError(null);
     setLastResult(null);
+    setEngineWarning(null);
     try {
-      const res = await api.ingest(file, mode);
+      const res = await api.ingest(file, mode, category);
       const docs = res.documentCount.toLocaleString();
       const chunks = res.chunkCount.toLocaleString();
       const secs = (res.durationMs / 1000).toFixed(1);
       setLastResult(
         res.mode === "replace"
           ? `Replaced corpus with ${docs} documents (${chunks} chunks) in ${secs}s`
-          : `Added ${docs} documents (${chunks} chunks) to the corpus in ${secs}s`,
+          : `Added ${docs} ${CATEGORY_LABELS[res.category].toLowerCase()} documents (${chunks} chunks) to the corpus in ${secs}s`,
       );
+      if (!res.engineSync) {
+        setEngineWarning(
+          "The workbook did not reach the engine — pipeline runs can't verify against it. Is the engine running?",
+        );
+      }
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       onIngested();
@@ -153,6 +190,19 @@ function IngestPanel({ onIngested }: { onIngested: () => void }) {
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           disabled={loading}
         />
+        <div className="mode-toggle" title="What is this workbook? Input = source-system data, mapping = the translation rules, output = target-format artifacts.">
+          {(Object.keys(CATEGORY_LABELS) as CorpusCategory[]).map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={category === c ? "active" : ""}
+              onClick={() => setCategory(c)}
+              disabled={loading}
+            >
+              {CATEGORY_LABELS[c]}
+            </button>
+          ))}
+        </div>
         <div className="mode-toggle">
           <button
             type="button"
@@ -179,6 +229,7 @@ function IngestPanel({ onIngested }: { onIngested: () => void }) {
       {loading && <p className="hint">Parsing, chunking and embedding — large workbooks take a minute.</p>}
       {error && <p className="error-text">{error}</p>}
       {lastResult && <p className="success-text">{lastResult}</p>}
+      {engineWarning && <p className="error-text">{engineWarning}</p>}
     </div>
   );
 }
@@ -249,8 +300,8 @@ function AskTab({ status }: { status: StatusResponse | null }) {
             {m.sources && m.sources.length > 0 && (
               <div className="sources">
                 {m.sources.map((s) => (
-                  <span key={s.sheet} className="source-chip" title={`relevance ${s.score}`}>
-                    {s.sheet}
+                  <span key={`${s.category}-${s.sheet}`} className="source-chip" title={`${s.category} · relevance ${s.score}`}>
+                    {s.category}:{s.sheet}
                   </span>
                 ))}
               </div>
@@ -293,6 +344,322 @@ function AskTab({ status }: { status: StatusResponse | null }) {
           Ask
         </button>
       </form>
+    </div>
+  );
+}
+
+/* ---------- Pipeline tab: LLM-sketched operator DAG, run by the engine ---------- */
+
+type StepKind = "source" | "transform" | "terminal";
+
+function stepKind(op: string): StepKind {
+  if (op === "read_sheet") return "source";
+  if (op.startsWith("assert_")) return "terminal";
+  return "transform";
+}
+
+type StepNodeData = {
+  op: string;
+  kind: StepKind;
+  uses: string[];
+  paramsText: string;
+  paramsError?: string;
+  result?: PipelineStepResult;
+  onParamsChange: (stepId: string, text: string) => void;
+};
+type StepFlowNode = Node<StepNodeData, "step">;
+
+function formatCell(value: unknown): string {
+  if (value == null) return "∅";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function CheckView({ checks }: { checks: Record<string, unknown> }) {
+  const status = String(checks.status ?? "");
+  const entries = Object.entries(checks).filter(
+    ([k, v]) => k !== "status" && ["string", "number", "boolean"].includes(typeof v),
+  );
+  return (
+    <div className="check-view">
+      {status && (
+        <span className={`badge ${status === "PASS" ? "ok" : status === "FAIL" ? "bad" : "warn"}`}>
+          {status}
+        </span>
+      )}
+      {entries.map(([k, v]) => (
+        <span key={k} className="meta">
+          {k}: {formatCell(v)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SampleTable({ rows }: { rows: Array<Record<string, unknown>> }) {
+  const columns = Object.keys(rows[0]).slice(0, 6);
+  const truncated = Object.keys(rows[0]).length > columns.length;
+  return (
+    <div className="sample-scroll nodrag">
+      <table className="sample-table">
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+            {truncated && <th>…</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {columns.map((c) => (
+                <td key={c}>{formatCell(r[c])}</td>
+              ))}
+              {truncated && <td>…</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StepNode({ id, data }: NodeProps<StepFlowNode>) {
+  const result = data.result;
+  return (
+    <div className={`step-node ${data.kind}`}>
+      {data.kind !== "source" && <Handle type="target" position={Position.Left} />}
+      <div className="step-head">
+        <span className={`op-badge ${data.kind}`}>{data.op}</span>
+        <span className="step-id mono">{id}</span>
+        {result && (
+          <span className={`badge ${result.status === "ok" ? "ok" : result.status === "error" ? "bad" : "warn"}`}>
+            {result.status}
+          </span>
+        )}
+      </div>
+      {data.uses.length > 0 && <div className="step-uses meta">input: {data.uses.join(", ")}</div>}
+      <textarea
+        className="params-editor nodrag mono"
+        spellCheck={false}
+        value={data.paramsText}
+        rows={Math.min(9, Math.max(2, data.paramsText.split("\n").length))}
+        onChange={(e) => data.onParamsChange(id, e.target.value)}
+      />
+      {data.paramsError && <p className="error-text">{data.paramsError}</p>}
+      {result && (
+        <div className="step-result">
+          {result.error && <p className="error-text">{result.error}</p>}
+          {(result.rowCount != null || result.unmatched != null) && (
+            <div className="meta">
+              {result.rowCount != null && `${result.rowCount.toLocaleString()} rows`}
+              {result.rowCount != null && result.unmatched != null && " · "}
+              {result.unmatched != null && `${result.unmatched} unmatched`}
+            </div>
+          )}
+          {result.checks && <CheckView checks={result.checks} />}
+          {result.sample && result.sample.length > 0 && <SampleTable rows={result.sample} />}
+        </div>
+      )}
+      {data.kind !== "terminal" && <Handle type="source" position={Position.Right} />}
+    </div>
+  );
+}
+
+const nodeTypes = { step: StepNode };
+
+function PipelineTab({ status }: { status: StatusResponse | null }) {
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sketch, setSketch] = useState<PipelineSketchResponse | null>(null);
+  const [paramsDraft, setParamsDraft] = useState<Record<string, string>>({});
+  const [paramsErrors, setParamsErrors] = useState<Record<string, string>>({});
+  const [runResults, setRunResults] = useState<Record<string, PipelineStepResult>>({});
+  const [running, setRunning] = useState(false);
+  const [nodes, setNodes, onNodesChange] = useNodesState<StepFlowNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  const onParamsChange = useCallback((stepId: string, text: string) => {
+    setParamsDraft((prev) => ({ ...prev, [stepId]: text }));
+  }, []);
+
+  // Rebuild the graph for each new sketch. Layered layout: depth = longest
+  // chain of `uses` refs back to a source; nodes in a layer stack vertically.
+  useEffect(() => {
+    if (!sketch?.pipeline) {
+      setNodes([]);
+      setEdges([]);
+      return;
+    }
+    const steps = sketch.pipeline.steps;
+    const refsOf = (i: number): string[] => steps[i].uses ?? (i > 0 ? [steps[i - 1].id] : []);
+    const depth = new Map<string, number>();
+    const perLayer = new Map<number, number>();
+    const newNodes: StepFlowNode[] = [];
+    const newEdges: Edge[] = [];
+    steps.forEach((step, i) => {
+      const refs = refsOf(i).filter((r) => steps.some((s) => s.id === r));
+      const d = refs.length > 0 ? Math.max(...refs.map((r) => (depth.get(r) ?? 0) + 1)) : 0;
+      depth.set(step.id, d);
+      const slot = perLayer.get(d) ?? 0;
+      perLayer.set(d, slot + 1);
+      newNodes.push({
+        id: step.id,
+        type: "step",
+        position: { x: d * 380, y: slot * 280 },
+        data: {
+          op: step.op,
+          kind: stepKind(step.op),
+          uses: refs,
+          paramsText: JSON.stringify(step.params ?? {}, null, 2),
+          onParamsChange,
+        },
+      });
+      for (const ref of refs) {
+        newEdges.push({ id: `${ref}->${step.id}`, source: ref, target: step.id, animated: true });
+      }
+    });
+    setParamsDraft(Object.fromEntries(newNodes.map((n) => [n.id, n.data.paramsText])));
+    setParamsErrors({});
+    setRunResults({});
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [sketch, onParamsChange, setNodes, setEdges]);
+
+  // Push param edits / run results into existing nodes (positions preserved).
+  useEffect(() => {
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          paramsText: paramsDraft[n.id] ?? n.data.paramsText,
+          paramsError: paramsErrors[n.id],
+          result: runResults[n.id],
+        },
+      })),
+    );
+  }, [paramsDraft, paramsErrors, runResults, setNodes]);
+
+  async function sketchIt(q: string) {
+    const text = q.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setSketch(await api.sketchPipeline(text));
+    } catch (err) {
+      setSketch(null);
+      setError(err instanceof Error ? err.message : "Sketch failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function run() {
+    if (!sketch?.pipeline || running) return;
+    // Params are editable JSON; refuse to run with malformed steps.
+    const errors: Record<string, string> = {};
+    const steps = sketch.pipeline.steps.map((s) => {
+      try {
+        return { ...s, params: JSON.parse(paramsDraft[s.id] ?? "{}") as Record<string, unknown> };
+      } catch {
+        errors[s.id] = "params are not valid JSON";
+        return s;
+      }
+    });
+    setParamsErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    setRunning(true);
+    setError(null);
+    try {
+      const res: PipelineRunResponse = await api.runPipeline({ ...sketch.pipeline, steps });
+      if (res.steps) {
+        setRunResults(Object.fromEntries(res.steps.map((r) => [r.id, r])));
+      }
+      if (!res.ok && res.errors) setError(res.errors.join("\n"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Run failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="pipeline">
+      <div className="pipeline-bar">
+        <input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sketchIt(question)}
+          placeholder="How did the source GL become the loader?"
+          disabled={!status?.ready || busy}
+        />
+        <button onClick={() => sketchIt(question)} disabled={!status?.ready || busy || !question.trim()}>
+          {busy ? "Sketching…" : "Sketch pipeline"}
+        </button>
+        {sketch?.pipeline && (
+          <button onClick={run} disabled={running}>
+            {running ? "Running…" : "Run on sample data"}
+          </button>
+        )}
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {sketch && !sketch.validation.ok && sketch.validation.errors.length > 0 && (
+        <div className="notice-banner">
+          Engine validation flagged this draft: {sketch.validation.errors.join("; ")} — edit the
+          step params to fix it, or re-sketch.
+        </div>
+      )}
+      <div className="pipeline-canvas">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          fitView
+        >
+          <Background />
+          <Controls />
+        </ReactFlow>
+        {nodes.length === 0 && !busy && (
+          <div className="pipeline-empty">
+            <h2>Sketch the input → output translation</h2>
+            <p>
+              The assistant drafts a pipeline from the deterministic engine's atomic operators,
+              grounded in the ingested input, mapping rules, and output contract. Run it on real
+              data, then tweak the step params and re-run to verify or experiment.
+            </p>
+            {!status?.ready && (
+              <p className="hint">
+                Ingest the source GL (input), the mapping workbook (mapping), and the loader
+                (output) first.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      {sketch?.explanation && (
+        <div className="pipeline-explanation">
+          <h2>Why this pipeline</h2>
+          <ReactMarkdown>{sketch.explanation}</ReactMarkdown>
+          {sketch.sources.length > 0 && (
+            <div className="sources">
+              {sketch.sources.map((s) => (
+                <span key={`${s.category}-${s.sheet}`} className="source-chip" title={`${s.category} · relevance ${s.score}`}>
+                  {s.category}:{s.sheet}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="meta">
+            {sketch.latencyMs} ms · {sketch.model}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

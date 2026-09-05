@@ -560,3 +560,254 @@ button.small {
     max-width: 95%;
   }
 }
+
+/* ---------- Category badges ---------- */
+.category-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.category-badge.input {
+  background: rgba(146, 94, 7, 0.1);
+  border: 1px solid rgba(146, 94, 7, 0.4);
+  color: #925e07;
+}
+
+.category-badge.mapping {
+  background: rgba(47, 111, 224, 0.08);
+  border: 1px solid rgba(47, 111, 224, 0.35);
+  color: var(--accent);
+}
+
+.category-badge.output {
+  background: rgba(46, 158, 87, 0.1);
+  border: 1px solid rgba(46, 158, 87, 0.4);
+  color: var(--success);
+}
+
+.badge.warn {
+  background: rgba(146, 94, 7, 0.1);
+  border: 1px solid rgba(146, 94, 7, 0.4);
+  color: #925e07;
+}
+
+/* ---------- Pipeline tab ---------- */
+.pipeline {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pipeline-bar {
+  display: flex;
+  gap: 10px;
+  padding: 14px clamp(16px, 6vw, 80px);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.pipeline-bar input {
+  flex: 1;
+}
+
+.pipeline .error-banner,
+.pipeline .notice-banner {
+  margin: 12px clamp(16px, 6vw, 80px) 0;
+}
+
+.pipeline-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.pipeline-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.pipeline-empty h2 {
+  font-size: 1.3rem;
+  margin-bottom: 8px;
+}
+
+.pipeline-empty p {
+  max-width: 560px;
+  color: var(--text-dim);
+}
+
+.pipeline-explanation {
+  max-height: 30vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 14px clamp(16px, 6vw, 80px);
+  font-size: 0.9rem;
+}
+
+.pipeline-explanation h2 {
+  font-size: 0.85rem;
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pipeline-explanation .sources {
+  margin: 10px 0 6px;
+}
+
+/* ---------- Pipeline step nodes (React Flow) ---------- */
+.step-node {
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  box-shadow: 0 1px 3px rgba(29, 37, 48, 0.08);
+}
+
+.step-node.source {
+  border-left: 4px solid #925e07;
+}
+
+.step-node.transform {
+  border-left: 4px solid var(--accent);
+}
+
+.step-node.terminal {
+  border-left: 4px solid var(--success);
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.step-head .step-id {
+  color: var(--text-dim);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-badge {
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: "SF Mono", Menlo, monospace;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.step-node.source .op-badge {
+  color: #925e07;
+  border-color: rgba(146, 94, 7, 0.4);
+}
+
+.step-node.transform .op-badge {
+  color: var(--accent);
+  border-color: rgba(47, 111, 224, 0.35);
+}
+
+.step-node.terminal .op-badge {
+  color: var(--success);
+  border-color: rgba(46, 158, 87, 0.4);
+}
+
+.step-uses {
+  margin-bottom: 6px;
+}
+
+.params-editor {
+  width: 100%;
+  resize: vertical;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  outline: none;
+}
+
+.params-editor:focus {
+  border-color: var(--accent);
+}
+
+.step-result {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.check-view {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+}
+
+.sample-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.sample-table {
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.sample-table th {
+  text-align: left;
+  color: var(--text-dim);
+  padding: 3px 8px 3px 0;
+  border-bottom: 1px solid var(--border);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sample-table td {
+  padding: 3px 8px 3px 0;
+  border-bottom: 1px solid var(--panel-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* React Flow handles in our colour scheme */
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+}
+
+.react-flow__controls {
+  border-radius: 6px;
+  overflow: hidden;
+}

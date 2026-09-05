@@ -2,6 +2,7 @@ import { Document } from "@langchain/core/documents";
 import type { Embeddings } from "@langchain/core/embeddings";
 import { QdrantVectorStore } from "@langchain/qdrant";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import type { CorpusCategory } from "../ingestion/xlsx.js";
 import { log } from "../observability.js";
 
 export class QdrantUnavailableError extends Error {
@@ -13,6 +14,7 @@ export class QdrantUnavailableError extends Error {
 
 export interface IndexMetadata {
   sourceLabel: string;
+  category: CorpusCategory;
   ingestedAt: string;
   /** Sheet-part documents produced by ingestion (before chunking). */
   documentCount: number;
@@ -25,6 +27,11 @@ export interface SearchHit {
   document: Document;
   /** Cosine similarity in [-1, 1]; higher is more similar. */
   score: number;
+}
+
+/** Optional retrieval narrowing; omit to search the whole corpus. */
+export interface SearchFilter {
+  category?: CorpusCategory;
 }
 
 export interface RuleIndexOptions {
@@ -137,13 +144,16 @@ export class RuleIndex {
     sourceLabel: string,
     documentCount: number,
     embeddingModel: string,
+    category: CorpusCategory,
   ): Promise<void> {
     await this.dropCollection();
     // Recreate the store so the first upsert re-runs ensureCollection.
     this.store = null;
     await this.upsertBatches(documents);
-    this.sources = [this.sourceMetadata(sourceLabel, documentCount, documents.length, embeddingModel)];
-    log("index_replaced", { sourceLabel, documentCount, chunkCount: documents.length });
+    this.sources = [
+      this.sourceMetadata(sourceLabel, documentCount, documents.length, embeddingModel, category),
+    ];
+    log("index_replaced", { sourceLabel, category, documentCount, chunkCount: documents.length });
   }
 
   /**
@@ -155,12 +165,13 @@ export class RuleIndex {
     sourceLabel: string,
     documentCount: number,
     embeddingModel: string,
+    category: CorpusCategory,
   ): Promise<void> {
     await this.upsertBatches(documents);
     this.sources.push(
-      this.sourceMetadata(sourceLabel, documentCount, documents.length, embeddingModel),
+      this.sourceMetadata(sourceLabel, documentCount, documents.length, embeddingModel, category),
     );
-    log("index_appended", { sourceLabel, documentCount, chunkCount: documents.length });
+    log("index_appended", { sourceLabel, category, documentCount, chunkCount: documents.length });
   }
 
   private sourceMetadata(
@@ -168,9 +179,11 @@ export class RuleIndex {
     documentCount: number,
     chunkCount: number,
     embeddingModel: string,
+    category: CorpusCategory,
   ): IndexMetadata {
     return {
       sourceLabel,
+      category,
       ingestedAt: new Date().toISOString(),
       documentCount,
       chunkCount,
@@ -214,14 +227,30 @@ export class RuleIndex {
     }
   }
 
-  async search(query: string, k: number, minScore: number): Promise<SearchHit[]> {
+  async search(
+    query: string,
+    k: number,
+    minScore: number,
+    filter?: SearchFilter,
+  ): Promise<SearchHit[]> {
     if (!this.store) return [];
     let results: [Document, number][];
+    // LangChain nests chunk metadata under the `metadata` payload key, so a
+    // category filter is a payload match on `metadata.category`. Chunks
+    // ingested before categories existed carry no such key and only match
+    // unfiltered searches.
+    const qdrantFilter = filter?.category
+      ? { must: [{ key: "metadata.category", match: { value: filter.category } }] }
+      : undefined;
     try {
       // Over-fetch, then trim for diversity: plain top-k on a corpus with many
       // similar rows returns near-duplicate chunks from a single sheet, which
       // starves the LLM of the cross-section it needs to answer.
-      results = await this.store.similaritySearchWithScore(query, k * FETCH_MULTIPLIER);
+      results = await this.store.similaritySearchWithScore(
+        query,
+        k * FETCH_MULTIPLIER,
+        qdrantFilter,
+      );
     } catch (error) {
       throw this.wrapUnavailable(error);
     }

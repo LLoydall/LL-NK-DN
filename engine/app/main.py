@@ -26,13 +26,15 @@ No LLM calls in this service.
 """
 
 from typing import Any
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 # Deterministic checks — wired into POST /check as the engine work lands.
 from app.deterministic_layer import balance_reconciliation, debit_credit_validation, validate_mapping, validate_coa_mapping
 from pydantic import BaseModel
 from app import mapping as mp
+from app.pipeline import OPERATOR_CATALOG, run_pipeline, validate_pipeline
 app = FastAPI(title="ylookup-engine", version="0.1.0")
 
 
@@ -83,3 +85,92 @@ def validate_mapping_endpoint() -> dict[str, Any]:
 
     print(coa_result)
     return {"ok": True, "entity_result": entity_result, "coa_result": coa_result}
+
+
+# =========================================================
+# JSON PIPELINES (operator catalog -> validate -> execute)
+# =========================================================
+
+class PipelineValidateRequest(BaseModel):
+    pipeline: dict[str, Any]
+
+
+class PipelineRunRequest(BaseModel):
+    pipeline: dict[str, Any]
+    max_rows: int = 200
+
+
+@app.get("/operators")
+def operators() -> dict[str, Any]:
+    # Served verbatim so an LLM prompt can sketch pipelines from the catalog.
+    return {"operators": OPERATOR_CATALOG}
+
+
+@app.post("/pipeline/validate")
+def pipeline_validate(request: PipelineValidateRequest) -> dict[str, Any]:
+    errors = validate_pipeline(request.pipeline)
+    return {"ok": not errors, "errors": errors}
+
+
+@app.post("/pipeline/run")
+def pipeline_run(request: PipelineRunRequest) -> dict[str, Any]:
+    return run_pipeline(request.pipeline, max_rows=request.max_rows)
+
+
+# =========================================================
+# UPLOADED WORKBOOKS (pushed by the Node server at ingest)
+# =========================================================
+
+# Mirrors the server's MAX_FILE_BYTES; uploads are whole-file POSTs.
+MAX_UPLOAD_BYTES = 20_000_000
+
+
+def _safe_upload_name(name: str) -> str:
+    # The name comes over the wire — keep only a plain .xlsx basename.
+    base = name.replace("\\", "/").split("/")[-1].strip()
+    if not base or base in (".", "..") or not base.lower().endswith(".xlsx"):
+        raise HTTPException(400, f"upload name must be an .xlsx filename: {name!r}")
+    return base
+
+
+@app.post("/data/upload")
+async def data_upload(request: Request, name: str, as_mapping: bool = False) -> dict[str, Any]:
+    """Store an uploaded workbook under UPLOADS_DIR so pipelines can read it
+    via read_sheet. as_mapping additionally (re)loads the crosswalk tables
+    from it (used when a mapping workbook is ingested)."""
+    base = _safe_upload_name(name)
+    body = await request.body()
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"workbook too large ({len(body)} > {MAX_UPLOAD_BYTES} bytes)")
+
+    dest_dir = Path(mp.UPLOADS_DIR)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / base
+    dest.write_bytes(body)
+
+    result: dict[str, Any] = {"ok": True, "name": base, "bytes": len(body)}
+    if as_mapping:
+        if not mp.load_workbook(str(dest)):
+            raise HTTPException(
+                422, f"could not load crosswalk tables from {base}: {mp.workbook_error}"
+            )
+        result["mappingTables"] = len(mp.legal_entity_map) + len(mp.coa_map)
+    return result
+
+
+@app.get("/data/uploads")
+def data_list_uploads() -> dict[str, Any]:
+    dest_dir = Path(mp.UPLOADS_DIR)
+    files = sorted(p.name for p in dest_dir.glob("*.xlsx")) if dest_dir.is_dir() else []
+    return {"uploads": files}
+
+
+@app.delete("/data/uploads")
+def data_clear_uploads() -> dict[str, Any]:
+    dest_dir = Path(mp.UPLOADS_DIR)
+    removed = 0
+    if dest_dir.is_dir():
+        for path in dest_dir.glob("*.xlsx"):
+            path.unlink()
+            removed += 1
+    return {"ok": True, "removed": removed}

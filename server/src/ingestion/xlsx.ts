@@ -1,8 +1,17 @@
 import * as XLSX from "xlsx";
 
+/**
+ * Corpus demarcation: every chunk is one of these. `input` is source-system
+ * data (e.g. the investor-level GL), `mapping` is the rules/crosswalks that
+ * translate input to output, `output` is target-format artifacts (the loader).
+ * The point of the tool is explaining how input became output, so retrieval
+ * and prompts are category-aware.
+ */
+export type CorpusCategory = "input" | "mapping" | "output";
+
 export interface SheetDocument {
   content: string;
-  metadata: { sheet: string; part: number };
+  metadata: { sheet: string; part: number; category: CorpusCategory };
 }
 
 // The upload template holds ~19k loader rows; its retrieval value is the
@@ -36,6 +45,13 @@ export function sheetLabel(sheet: string): string {
   const description = SHEET_DESCRIPTIONS[sheet];
   return description ? `${sheet} — ${description}` : sheet;
 }
+
+// Per-sheet category overrides (workbook-level category is the default). The
+// reference workbook holds both the mapping rules AND the produced loader, so
+// its template sheet is output even when the workbook is ingested as mapping.
+export const SHEET_CATEGORIES: Record<string, CorpusCategory> = {
+  [TEMPLATE_SHEET]: "output",
+};
 
 // Soft cap per document so a wide mapping sheet becomes a few focused
 // documents rather than one huge one (the chunker refines further).
@@ -99,39 +115,78 @@ function splitParts(sheet: string, headers: string[], lines: string[]): string[]
  */
 const SAMPLE_ROWS = 3;
 
-function sheetOverview(sheet: string, headers: string[], lines: string[]): string {
+function sheetOverview(
+  sheet: string,
+  headers: string[],
+  rowCount: number,
+  sampleLines: string[],
+): string {
   return [
     `Sheet overview: ${sheetLabel(sheet)}`,
     `Columns: ${headers.join(" | ")}`,
-    `Rows: ${lines.length}`,
-    ...lines.slice(0, SAMPLE_ROWS).map((line, i) => `Sample row ${i + 1}: ${line}`),
+    `Rows: ${rowCount}`,
+    ...sampleLines.map((line, i) => `Sample row ${i + 1}: ${line}`),
   ].join("\n");
+}
+
+/** Format just the first SAMPLE_ROWS rows of a sheet (data-sheet overviews). */
+function sampleRowLines(headers: string[], dataRows: Row[]): string[] {
+  return dataRows
+    .slice(0, SAMPLE_ROWS)
+    .map((row) => formatRow(headers, row))
+    .filter((l) => l.length > 0);
 }
 
 /**
  * Convert a workbook into retrieval documents: one overview per sheet, plus
  * one or more row documents per sheet, each a header line, the column list,
  * and compact `col: value | col: value` rows. Sheets are split into numbered
- * parts when they exceed ~4k characters.
+ * parts when they exceed ~4k characters. Every document is stamped with its
+ * category (workbook-level default, per-sheet override via SHEET_CATEGORIES).
+ *
+ * Only mapping sheets get row documents. Input/output sheets are DATA (the
+ * GL, the loader): tens of thousands of near-identical rows embed slowly,
+ * retrieve badly (the per-sheet diversity cap trims them to 3 chunks anyway),
+ * and their row-level truth belongs to the engine, not the vector store.
  */
-export function workbookToDocuments(workbook: XLSX.WorkBook): SheetDocument[] {
+export function workbookToDocuments(
+  workbook: XLSX.WorkBook,
+  category: CorpusCategory = "mapping",
+): SheetDocument[] {
   const documents: SheetDocument[] = [];
   for (const sheet of workbook.SheetNames) {
     const rows = sheetRows(workbook.Sheets[sheet]);
     if (rows.length === 0) continue;
     const headers = rows[0].map((cell) => String(cell ?? ""));
     const dataRows = rows.slice(1);
+    const sheetCategory = SHEET_CATEGORIES[sheet] ?? category;
 
     if (sheet === TEMPLATE_SHEET) {
       documents.push({
         content: templateSummary(sheet, headers, dataRows.length),
-        metadata: { sheet, part: 1 },
+        metadata: { sheet, part: 1, category: sheetCategory },
+      });
+      continue;
+    }
+
+    if (sheetCategory !== "mapping") {
+      documents.push({
+        content: sheetOverview(
+          sheet,
+          headers,
+          dataRows.length,
+          sampleRowLines(headers, dataRows),
+        ),
+        metadata: { sheet, part: 0, category: sheetCategory },
       });
       continue;
     }
 
     const lines = dataRows.map((row) => formatRow(headers, row)).filter((l) => l.length > 0);
-    documents.push({ content: sheetOverview(sheet, headers, lines), metadata: { sheet, part: 0 } });
+    documents.push({
+      content: sheetOverview(sheet, headers, lines.length, lines.slice(0, SAMPLE_ROWS)),
+      metadata: { sheet, part: 0, category: sheetCategory },
+    });
     const parts = splitParts(sheet, headers, lines);
     parts.forEach((body, i) => {
       documents.push({
@@ -140,7 +195,7 @@ export function workbookToDocuments(workbook: XLSX.WorkBook): SheetDocument[] {
           `Columns: ${headers.join(" | ")}`,
           body,
         ].join("\n"),
-        metadata: { sheet, part: i + 1 },
+        metadata: { sheet, part: i + 1, category: sheetCategory },
       });
     });
   }

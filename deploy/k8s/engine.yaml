@@ -1,4 +1,10 @@
 # Deterministic engine (Python FastAPI). Internal-only service.
+#
+# Uploaded workbooks (pushed by the app at ingest) persist on a small PVC at
+# /uploads — the sample dataset is NOT mounted in-cluster, so pipeline
+# verification runs against uploads. The engine boots without the reference
+# workbook; ingest a mapping workbook (full reference sheet set) to load the
+# crosswalk tables.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,12 +21,18 @@ spec:
       labels:
         app: engine
     spec:
+      # The image runs as nobody (65534); make the PVC group-writable.
+      securityContext:
+        fsGroup: 65534
       containers:
         - name: engine
           # Replaced by Cloud Build (see cloudbuild.yaml deploy step)
           image: ENGINE_IMAGE
           ports:
             - containerPort: 8080
+          env:
+            - name: UPLOADS_DIR
+              value: "/uploads"
           readinessProbe:
             httpGet:
               path: /healthz
@@ -34,6 +46,25 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          volumeMounts:
+            - name: uploads
+              mountPath: /uploads
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: engine-uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: engine-uploads
+  labels:
+    app: engine
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
