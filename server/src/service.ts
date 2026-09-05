@@ -2,7 +2,7 @@ import { config } from "./config.js";
 import { log } from "./observability.js";
 import { checkBatch, type EngineCheckResponse } from "./engineClient.js";
 import { chunkSheetDocuments } from "./ingestion/chunker.js";
-import { loadWorkbook } from "./ingestion/loader.js";
+import { loadUploadedWorkbook, loadWorkbook } from "./ingestion/loader.js";
 import { RuleIndex } from "./rag/store.js";
 import {
   createChatModel,
@@ -32,6 +32,9 @@ export class MigrationService {
       this.index = new RuleIndex(createEmbeddings(config), {
         url: config.QDRANT_URL,
         collectionName: config.QDRANT_COLLECTION,
+        batchSize: config.EMBED_BATCH_SIZE,
+        batchDelayMs: config.EMBED_BATCH_DELAY_MS,
+        maxRetries: config.EMBED_MAX_RETRIES,
       });
     }
     return this.index;
@@ -48,44 +51,58 @@ export class MigrationService {
 
   async status() {
     const index = this.ensureIndex();
-    const metadata = index.indexMetadata;
+    const sources = index.sourcesMetadata;
     const reachable = await index.ping();
     const counts = reachable ? await index.stats() : null;
+    const latest = sources[sources.length - 1];
+    const documentCount = sources.reduce((sum, m) => sum + m.documentCount, 0);
     return {
-      ready: Boolean(metadata) && reachable,
+      ready: sources.length > 0 && reachable,
       models: resolvedModelNames(config),
       qdrant: {
         url: config.QDRANT_URL,
         collection: config.QDRANT_COLLECTION,
         reachable,
       },
-      index: metadata
+      index: latest
         ? {
-            sourceLabel: metadata.sourceLabel,
-            documentCount: metadata.documentCount,
-            chunkCount: counts?.chunkCount ?? metadata.chunkCount,
-            ingestedAt: metadata.ingestedAt,
+            sourceLabel:
+              sources.length === 1 ? latest.sourceLabel : `${sources.length} sources`,
+            documentCount,
+            // Live Qdrant count when reachable; fall back to the recorded sum.
+            chunkCount:
+              counts?.chunkCount ?? sources.reduce((sum, m) => sum + m.chunkCount, 0),
+            ingestedAt: latest.ingestedAt,
           }
         : null,
+      sources: sources.map(({ sourceLabel, documentCount, chunkCount, ingestedAt }) => ({
+        sourceLabel,
+        documentCount,
+        chunkCount,
+        ingestedAt,
+      })),
     };
   }
 
-  async ingest(path: string) {
-    // Single-flight ingestion: replacing the index while another ingest runs
+  async ingest(input: IngestInput, mode: IngestMode = "append") {
+    // Single-flight ingestion: mutating the index while another ingest runs
     // would interleave embeddings calls and waste quota.
     if (this.ingestInFlight) {
       throw new Error("An ingestion is already in progress. Try again when it finishes.");
     }
-    const job = this.doIngest(path).finally(() => {
+    const job = this.doIngest(input, mode).finally(() => {
       this.ingestInFlight = null;
     });
     this.ingestInFlight = job;
     return job;
   }
 
-  private async doIngest(path: string) {
+  private async doIngest(input: IngestInput, mode: IngestMode) {
     const started = Date.now();
-    const loaded = await loadWorkbook(path);
+    const loaded =
+      "path" in input
+        ? await loadWorkbook(input.path)
+        : loadUploadedWorkbook(input.buffer, input.originalname);
     log("ingest_loaded", {
       source: loaded.sourceLabel,
       sheets: loaded.sheetCount,
@@ -98,19 +115,21 @@ export class MigrationService {
     const chunks = await chunkSheetDocuments(loaded.documents);
     log("ingest_chunked", { source: loaded.sourceLabel, chunks: chunks.length });
 
-    await this.ensureIndex().replaceAll(
-      chunks,
-      loaded.sourceLabel,
-      loaded.documents.length,
-      resolvedModelNames(config).embeddings,
-    );
+    const index = this.ensureIndex();
+    const embeddingModel = resolvedModelNames(config).embeddings;
+    if (mode === "replace") {
+      await index.replaceAll(chunks, loaded.sourceLabel, loaded.documents.length, embeddingModel);
+    } else {
+      await index.addAll(chunks, loaded.sourceLabel, loaded.documents.length, embeddingModel);
+    }
     const durationMs = Date.now() - started;
-    log("ingest_done", { source: loaded.sourceLabel, durationMs });
+    log("ingest_done", { source: loaded.sourceLabel, mode, durationMs });
     return {
       sourceLabel: loaded.sourceLabel,
       documentCount: loaded.documents.length,
       chunkCount: chunks.length,
       durationMs,
+      mode,
     };
   }
 
@@ -141,3 +160,8 @@ export class IndexNotReadyError extends Error {
     this.name = "IndexNotReadyError";
   }
 }
+
+export type IngestMode = "append" | "replace";
+
+/** Path flow (dev) or an uploaded workbook buffer (multipart). */
+export type IngestInput = { path: string } | { buffer: Buffer; originalname: string };

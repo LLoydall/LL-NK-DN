@@ -24,7 +24,8 @@ describe("chat graph", () => {
       },
     ]);
     const model = new FakeListChatModel({
-      responses: ["Fund A maps to LE-001 via [LE Mapping]."],
+      // First response is consumed by query rewriting, second by the answer.
+      responses: ["unmapped legal entities\nlegal entity crosswalk", "Fund A maps to LE-001 via [LE Mapping]."],
     });
     const graph = buildChatGraph({ index, model });
 
@@ -33,7 +34,8 @@ describe("chat graph", () => {
     expect(result.sources).toEqual([{ sheet: "LE Mapping", score: 0.9 }]);
     expect(result.noRelevantContext).toBe(false);
     expect(result.model).toBeTruthy();
-    expect(index.search).toHaveBeenCalledOnce();
+    // Original question + two rewrite variants; the duplicate hit is merged.
+    expect(index.search).toHaveBeenCalledTimes(3);
   });
 
   it("short-circuits without calling the LLM when nothing is retrieved", async () => {

@@ -39,11 +39,15 @@ and ask about mapping rules, batch-type overrides, and mapping gaps.
 ## Deploy (GCP)
 
 One-time: Artifact Registry repo `ylookup` in `europe-west2`, a GKE cluster
-`ylookup-gke` with Workload Identity (see `deploy/k8s/app.yaml` comments), and a
-Model Garden Qwen deployment. Then:
+`ylookup-gke`, a Model Garden Qwen deployment, and IAM for the default compute
+service account `394788628847-compute@developer.gserviceaccount.com`
+(`roles/aiplatform.user` for the app, `roles/container.developer` +
+`roles/artifactregistry.writer` for builds — see `cloudbuild.yaml` and
+`deploy/k8s/app.yaml` comments). Then:
 
 ```sh
-gcloud builds submit --project=priv-mkt-hack26lon-3752
+gcloud builds submit --project=priv-mkt-hack26lon-3752 \
+  --service-account=projects/priv-mkt-hack26lon-3752/serviceAccounts/394788628847-compute@developer.gserviceaccount.com
 ```
 
 This builds the app and engine images, pushes them to Artifact Registry pinned

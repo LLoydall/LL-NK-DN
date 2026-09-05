@@ -1,13 +1,12 @@
 # App = Node server (API) + built React UI served from the same process.
 #
-# Vertex AI access: the pod must run as a GCP identity with
-# roles/aiplatform.user on project priv-mkt-hack26lon-3752. Recommended:
-# Workload Identity — bind this deployment's KSA to a GCP SA, e.g.
-#   gcloud iam service-accounts create ylookup-app
+# Vertex AI access: pods authenticate with the node's service account — the
+# default compute SA 394788628847-compute@developer.gserviceaccount.com (no
+# custom Workload Identity setup). It needs roles/aiplatform.user on the
+# project:
 #   gcloud projects add-iam-policy-binding priv-mkt-hack26lon-3752 \
-#     --member=serviceAccount:ylookup-app@priv-mkt-hack26lon-3752.iam.gserviceaccount.com \
+#     --member=serviceAccount:394788628847-compute@developer.gserviceaccount.com \
 #     --role=roles/aiplatform.user
-# then set serviceAccountName: ylookup-app below and annotate the KSA.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,7 +23,6 @@ spec:
       labels:
         app: app
     spec:
-      # serviceAccountName: ylookup-app   # uncomment once Workload Identity is set up
       containers:
         - name: app
           # Replaced by Cloud Build (see cloudbuild.yaml deploy step)

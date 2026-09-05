@@ -20,7 +20,8 @@ Rules you must follow:
 - If an account or trans type has no mapping, check [Mapping Gaps] and say plainly that it is a known gap. Never invent a mapping to fill one.
 - Never invent amounts, account codes, investor IDs, deal IDs, or mappings that are not present in the context.
 - Cite the workbook sheet for every claim, formatted as [Sheet Name].
-- The migration steps are listed on the [Tasks] sheet; refer to them when asked about process order.
+- The migration steps are listed on the [Tasks] sheet. When asked about the process, ENUMERATE the actual steps from the retrieved [Tasks] content in order — never answer by merely pointing at the sheet.
+- Answer the question directly with the content of the retrieved rows (values, codes, priorities), not with descriptions of where the answer could be found.
 - Be concise and technical. Use markdown formatting.
 
 Retrieved context:
@@ -33,3 +34,19 @@ Retrieved context:
 export const NO_CONTEXT_ANSWER =
   "I couldn't find any mapping rules relevant to that question in the ingested workbook. " +
   "Try rephrasing, or check that the correct workbook has been ingested.";
+
+/**
+ * Retrieval recall depends heavily on phrasing (e.g. "no mapping" vs "mapping
+ * gaps"), so each question is expanded into a few search variants before
+ * searching. Keep the sheet vocabulary in sync with SHEET_DESCRIPTIONS in
+ * ingestion/xlsx.ts.
+ */
+export const QUERY_REWRITE_PROMPT = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You rewrite user questions into search queries for a fund-administration migration workbook with these sheets: Tasks (migration method steps), LE Mapping, Investor Mapping, Deal Mapping, CoA Mapping (chart of accounts crosswalk), Entity Listing, Deals List, Investors List, Suppliers List, Corvus CoA (target chart of accounts), Batch Preference (batch type override priority), Mapping Gaps (accounts/trans types with no target mapping), Movements Rec (reconciliation).
+
+Output exactly 3 alternative phrasings of the question, one per line, no numbering, no commentary. Vary the vocabulary using the sheet/domain terms above (e.g. "unmapped", "mapping gaps", "crosswalk", "override priority"). Keep each under 20 words.`,
+  ],
+  ["human", "{question}"],
+]);

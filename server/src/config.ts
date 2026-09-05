@@ -18,10 +18,12 @@ const envSchema = z.object({
   // OpenAI-compatible endpoint; embeddings use a first-party Vertex model.
   GCP_PROJECT_ID: z.string().default("priv-mkt-hack26lon-3752"),
   VERTEX_LOCATION: z.string().default("europe-west2"),
-  // Placeholder Model Garden model id; override via env once the real model is picked.
-  VERTEX_CHAT_MODEL: z.string().default("qwen3-32b-instruct-maas"),
-  // Dedicated Model Garden endpoint id; when unset, chat goes through the
-  // shared "openapi" endpoint for the project/location.
+  // First-party Gemini publisher model (no deployment needed). To use a
+  // deployed Model Garden model (e.g. Qwen) instead, set VERTEX_CHAT_MODEL to
+  // its served model id AND set VERTEX_CHAT_ENDPOINT_ID below.
+  VERTEX_CHAT_MODEL: z.string().default("gemini-2.5-flash"),
+  // Dedicated Model Garden endpoint id; when set, chat goes through that
+  // endpoint's OpenAI-compatible route instead of first-party Gemini.
   VERTEX_CHAT_ENDPOINT_ID: z.string().optional(),
   VERTEX_EMBEDDING_MODEL: z.string().default("text-embedding-004"),
   // Only place ADC env vars are read; google-auth-library resolves the rest.
@@ -32,7 +34,7 @@ const envSchema = z.object({
   // Deterministic engine sidecar (see engine/ in the repo root).
   ENGINE_URL: z.string().url().default("http://localhost:8081"),
   // Retrieval tuning.
-  TOP_K: z.coerce.number().int().min(1).max(50).default(8),
+  TOP_K: z.coerce.number().int().min(1).max(50).default(12),
   // Minimum cosine similarity (Qdrant scores, higher = better).
   SCORE_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.25),
   // Context management: hard cap on characters of retrieved context per answer.
@@ -45,6 +47,13 @@ const envSchema = z.object({
   MAX_QUESTION_CHARS: z.coerce.number().int().positive().default(4_000),
   // Ingestion limit; the reference workbook is ~2MB, leave headroom.
   MAX_FILE_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  // Embedding pacing: lab projects have tiny per-minute request quotas on the
+  // embeddings model. Max 250 instances per Vertex request.
+  EMBED_BATCH_SIZE: z.coerce.number().int().min(1).max(250).default(250),
+  // Pause between embedding batches to stay under requests-per-minute quota.
+  EMBED_BATCH_DELAY_MS: z.coerce.number().int().min(0).default(1_000),
+  // Retries per batch on 429/RESOURCE_EXHAUSTED with exponential backoff.
+  EMBED_MAX_RETRIES: z.coerce.number().int().min(0).default(5),
 });
 
 const env = envSchema.parse(process.env);

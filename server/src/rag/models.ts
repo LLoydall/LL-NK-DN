@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Embeddings } from "@langchain/core/embeddings";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { VertexAIEmbeddings } from "@langchain/google-vertexai";
+import { ChatVertexAI, VertexAIEmbeddings } from "@langchain/google-vertexai";
 import { ChatOpenAI } from "@langchain/openai";
 import { GoogleAuth } from "google-auth-library";
 import type { AppConfig } from "../config.js";
@@ -61,17 +61,28 @@ async function accessToken(): Promise<string> {
 }
 
 /**
- * Chat model factory. Async because the ADC access token must be fetched
- * before constructing the client. Note the token is captured at construction
- * time (~1h lifetime); for a hackathon-scale service that is acceptable, and
- * swapping baseURL/model via env stays trivial.
+ * Chat model factory. Two paths:
+ * - Default: first-party Gemini publisher models via ChatVertexAI — no
+ *   deployment required, ADC handled by the client library. This is what the
+ *   hackathon lab projects support (no Model Garden deploy quota).
+ * - When VERTEX_CHAT_ENDPOINT_ID is set: a deployed Model Garden open model
+ *   (e.g. Qwen) via its OpenAI-compatible endpoint; the ADC access token is
+ *   captured at construction time (~1h lifetime), acceptable at hackathon scale.
  */
 export async function createChatModel(config: AppConfig): Promise<BaseChatModel> {
-  return new ChatOpenAI({
-    apiKey: await accessToken(),
+  if (config.VERTEX_CHAT_ENDPOINT_ID) {
+    return new ChatOpenAI({
+      apiKey: await accessToken(),
+      model: config.VERTEX_CHAT_MODEL,
+      temperature: 0,
+      configuration: { baseURL: vertexOpenAIBaseURL(config) },
+    });
+  }
+  return new ChatVertexAI({
     model: config.VERTEX_CHAT_MODEL,
     temperature: 0,
-    configuration: { baseURL: vertexOpenAIBaseURL(config) },
+    location: config.VERTEX_LOCATION,
+    authOptions: { projectId: config.GCP_PROJECT_ID },
   });
 }
 

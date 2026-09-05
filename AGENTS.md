@@ -13,7 +13,9 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
 ## Layout
 
 - `server/` — Node.js + TypeScript API (Express). LangChain/LangGraph RAG lives here.
-  - `src/ingestion/` — workbook (.xlsx) loading and chunking of the mapping/reference sheets.
+  - `src/ingestion/` — workbook (.xlsx) loading (repo-local path or multipart upload via
+    multer) and chunking of the mapping/reference sheets. Ingest supports `append` (grow
+    the corpus) and `replace` modes.
   - `src/rag/` — Qdrant vector store (`store.ts`), LangGraph chat graph (`graph.ts`),
     prompts (`prompts.ts`), Vertex AI model factories (`models.ts`).
   - `src/engineClient.ts` — HTTP client for the Python engine.
@@ -36,6 +38,8 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
 - Engine: `cd engine && pip install -r requirements.txt && uvicorn app.main:app --port 8081`.
 - Local backing services: `docker compose up qdrant engine`.
 - Deploy: `gcloud builds submit --project=priv-mkt-hack26lon-3752`.
+- Or use the `Makefile` (`make help`): `make backend`, `make frontend`, `make services`,
+  `make check`, `make deploy`.
 
 ## Conventions
 
@@ -44,8 +48,10 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
   fakes from `@langchain/core/utils/testing`.
 - Config only via `server/src/config.ts` (zod-validated env). Never read `process.env` elsewhere.
 - Prompts live in `server/src/rag/prompts.ts` so changes are reviewable in git.
-- Model access is Vertex AI Model Garden (project `priv-mkt-hack26lon-3752`) via ADC;
-  embeddings via `@langchain/google-vertexai`. Vectors live in Qdrant, not on disk.
+- Model access is Vertex AI (project `priv-mkt-hack26lon-3752`) via ADC: chat defaults to a
+  first-party Gemini publisher model (no deployment needed); setting `VERTEX_CHAT_ENDPOINT_ID`
+  switches chat to a deployed Model Garden endpoint (e.g. Qwen) via its OpenAI-compatible
+  route. Embeddings via `@langchain/google-vertexai`. Vectors live in Qdrant, not on disk.
 - Keep changes minimal and match surrounding style; don't add dependencies without
   checking whether an existing one already does the job.
 

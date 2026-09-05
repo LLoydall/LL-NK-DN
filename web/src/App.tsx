@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { api, type ChatHistoryMessage, type SourceRef, type StatusResponse } from "./api";
+import { api, type ChatHistoryMessage, type IngestMode, type SourceRef, type StatusResponse } from "./api";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -15,9 +15,6 @@ const SUGGESTED_QUESTIONS = [
   "Which accounts have no mapping to the target CoA?",
   "How are investors mapped to the target system?",
 ];
-
-const WORKBOOK_PLACEHOLDER =
-  "sample-data-and-call-transcripts/02-investor-level-gl-to-loader/output/Tranche 1 - reference and verified loader v4c (anonymised).xlsx";
 
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -39,7 +36,7 @@ export default function App() {
             <p>GL → loader migration assistant</p>
           </div>
         </div>
-        <IngestPanel status={status} onIngested={refreshStatus} />
+        <IngestPanel onIngested={refreshStatus} />
         {status && (
           <div className="status-card">
             <h2>Models</h2>
@@ -70,17 +67,25 @@ export default function App() {
         )}
         {status?.index && (
           <div className="status-card">
-            <h2>Indexed workbook</h2>
+            <h2>Corpus</h2>
             <dl>
-              <dt>Source</dt>
-              <dd className="mono break">{status.index.sourceLabel}</dd>
               <dt>Documents</dt>
               <dd>{status.index.documentCount.toLocaleString()}</dd>
               <dt>Chunks</dt>
               <dd>{status.index.chunkCount.toLocaleString()}</dd>
-              <dt>Ingested</dt>
-              <dd>{new Date(status.index.ingestedAt).toLocaleString()}</dd>
+              <dt>Sources</dt>
+              <dd>{status.sources.length}</dd>
             </dl>
+            <ul className="source-list">
+              {status.sources.map((s, i) => (
+                <li key={`${s.sourceLabel}-${i}`}>
+                  <span className="mono break">{s.sourceLabel}</span>
+                  <span className="source-meta">
+                    {s.chunkCount.toLocaleString()} chunks · {new Date(s.ingestedAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
             <button className="ghost danger" onClick={() => api.clearIndex().then(refreshStatus)}>
               Clear index
             </button>
@@ -103,31 +108,32 @@ export default function App() {
   );
 }
 
-function IngestPanel({
-  status,
-  onIngested,
-}: {
-  status: StatusResponse | null;
-  onIngested: () => void;
-}) {
-  const [value, setValue] = useState("");
+function IngestPanel({ onIngested }: { onIngested: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<IngestMode>("append");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const v = value.trim();
-    if (!v || loading) return;
+    if (!file || loading) return;
     setLoading(true);
     setError(null);
     setLastResult(null);
     try {
-      const res = await api.ingest(v);
+      const res = await api.ingest(file, mode);
+      const docs = res.documentCount.toLocaleString();
+      const chunks = res.chunkCount.toLocaleString();
+      const secs = (res.durationMs / 1000).toFixed(1);
       setLastResult(
-        `Indexed ${res.documentCount.toLocaleString()} documents into ${res.chunkCount.toLocaleString()} chunks in ${(res.durationMs / 1000).toFixed(1)}s`,
+        res.mode === "replace"
+          ? `Replaced corpus with ${docs} documents (${chunks} chunks) in ${secs}s`
+          : `Added ${docs} documents (${chunks} chunks) to the corpus in ${secs}s`,
       );
-      setValue("");
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       onIngested();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ingestion failed");
@@ -141,16 +147,35 @@ function IngestPanel({
       <h2>Workbook</h2>
       <form onSubmit={submit}>
         <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder={WORKBOOK_PLACEHOLDER}
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           disabled={loading}
         />
-        <button type="submit" disabled={loading || !value.trim()}>
-          {loading ? "Ingesting…" : status?.ready ? "Re-ingest" : "Ingest"}
+        <div className="mode-toggle">
+          <button
+            type="button"
+            className={mode === "append" ? "active" : ""}
+            onClick={() => setMode("append")}
+            disabled={loading}
+          >
+            Add to corpus
+          </button>
+          <button
+            type="button"
+            className={mode === "replace" ? "active" : ""}
+            onClick={() => setMode("replace")}
+            disabled={loading}
+          >
+            Replace corpus
+          </button>
+        </div>
+        <button type="submit" disabled={loading || !file}>
+          {loading ? "Ingesting…" : "Ingest"}
         </button>
       </form>
-      <p className="hint">Absolute path to the .xlsx workbook on the server.</p>
+      <p className="hint">Upload a .xlsx workbook — added to the corpus, or replacing it entirely.</p>
       {loading && <p className="hint">Parsing, chunking and embedding — large workbooks take a minute.</p>}
       {error && <p className="error-text">{error}</p>}
       {lastResult && <p className="success-text">{lastResult}</p>}

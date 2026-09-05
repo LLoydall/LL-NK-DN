@@ -5,8 +5,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { config } from "../config.js";
 import { log } from "../observability.js";
 import { resolvedModelNames } from "./models.js";
-import type { RuleIndex, SearchHit } from "./store.js";
-import { ANSWER_PROMPT, NO_CONTEXT_ANSWER } from "./prompts.js";
+import { ANSWER_PROMPT, NO_CONTEXT_ANSWER, QUERY_REWRITE_PROMPT } from "./prompts.js";
+import { MAX_CHUNKS_PER_SHEET, type RuleIndex, type SearchHit } from "./store.js";
 
 /**
  * Agent state for the RAG graph. Kept deliberately small: the graph is
@@ -53,10 +53,57 @@ function formatContext(hits: SearchHit[]): string {
 }
 
 export function buildChatGraph(deps: ChatGraphDeps) {
+  /**
+   * Expand the question into search variants (one cheap LLM call). Recall is
+   * phrasing-sensitive — the workbook's vocabulary ("mapping gaps") often
+   * differs from the user's ("no mapping") — so a single embedding search
+   * misses the right sheet. Falls back to the bare question on any failure.
+   */
+  async function rewriteQueries(question: string): Promise<string[]> {
+    try {
+      const chain = QUERY_REWRITE_PROMPT.pipe(deps.model);
+      const response = await chain.invoke({ question });
+      const text =
+        typeof response.content === "string"
+          ? response.content
+          : response.content.map((c) => ("text" in c ? c.text : "")).join("");
+      return text
+        .split("\n")
+        .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*])\s*/, "").trim())
+        .filter((line) => line.length > 0 && line.toLowerCase() !== question.toLowerCase())
+        .slice(0, 3);
+    } catch (error) {
+      log("query_rewrite_failed", { error: String(error) });
+      return [];
+    }
+  }
+
   async function retrieve(state: typeof GraphState.State) {
-    const hits = await deps.index.search(state.question, config.TOP_K, config.SCORE_THRESHOLD);
+    const queries = [state.question, ...(await rewriteQueries(state.question))];
+    // Merge hits across variants, keeping each chunk's best score.
+    const merged = new Map<string, SearchHit>();
+    for (const query of queries) {
+      const hits = await deps.index.search(query, config.TOP_K, config.SCORE_THRESHOLD);
+      for (const hit of hits) {
+        const prev = merged.get(hit.document.pageContent);
+        if (!prev || hit.score > prev.score) merged.set(hit.document.pageContent, hit);
+      }
+    }
+    // Re-apply the per-sheet cap across the merged set, best score first.
+    const perSheet = new Map<string, number>();
+    const hits = [...merged.values()]
+      .sort((a, b) => b.score - a.score)
+      .filter((hit) => {
+        const sheet = String(hit.document.metadata.sheet);
+        const count = perSheet.get(sheet) ?? 0;
+        if (count >= MAX_CHUNKS_PER_SHEET) return false;
+        perSheet.set(sheet, count + 1);
+        return true;
+      })
+      .slice(0, config.TOP_K);
     log("retrieve", {
       question: state.question.slice(0, 120),
+      queries: queries.length,
       hits: hits.length,
       topScore: hits[0]?.score ?? null,
     });

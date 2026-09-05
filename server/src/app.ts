@@ -1,8 +1,9 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import cors from "cors";
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
+import multer from "multer";
 import { z } from "zod";
 import { config } from "./config.js";
 import { EngineUnavailableError } from "./engineClient.js";
@@ -11,8 +12,11 @@ import { MissingCredentialError } from "./rag/models.js";
 import { QdrantUnavailableError } from "./rag/store.js";
 import { IndexNotReadyError, MigrationService } from "./service.js";
 
+const modeSchema = z.enum(["append", "replace"]).default("append");
+
 const ingestSchema = z.object({
   path: z.string().min(1).max(1_000),
+  mode: modeSchema,
 });
 
 const chatSchema = z.object({
@@ -50,25 +54,59 @@ export function createApp(service: MigrationService): Express {
     res.json(await service.status());
   });
 
-  app.post("/api/ingest", async (req: Request, res: Response) => {
-    const parsed = ingestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
-      return;
-    }
-    try {
-      const result = await service.ingest(parsed.data.path);
-      res.json(result);
-    } catch (error) {
-      logError("ingest_failed", error);
-      const message = error instanceof Error ? error.message : "Ingestion failed";
-      const status =
-        error instanceof MissingCredentialError || error instanceof QdrantUnavailableError
-          ? 503
-          : 422;
-      res.status(status).json({ error: message });
-    }
+  // Multipart uploads stay in memory; the size guard mirrors MAX_FILE_BYTES.
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: config.MAX_FILE_BYTES },
   });
+
+  // Multer passes non-multipart requests straight through, so one route can
+  // serve both the upload flow (field `file`) and the JSON path flow (dev).
+  app.post(
+    "/api/ingest",
+    (req: Request, res: Response, next: NextFunction) => {
+      upload.single("file")(req, res, (error: unknown) => {
+        if (!error) return next();
+        const message =
+          error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE"
+            ? `Workbook is too large (limit ${config.MAX_FILE_BYTES} bytes)`
+            : "Invalid multipart upload";
+        res.status(400).json({ error: message });
+      });
+    },
+    async (req: Request, res: Response) => {
+      try {
+        if (req.file) {
+          const mode = modeSchema.safeParse(req.body?.mode);
+          if (!mode.success) {
+            res.status(400).json({ error: 'Invalid mode; expected "append" or "replace"' });
+            return;
+          }
+          res.json(
+            await service.ingest(
+              { buffer: req.file.buffer, originalname: req.file.originalname },
+              mode.data,
+            ),
+          );
+          return;
+        }
+        const parsed = ingestSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+          return;
+        }
+        res.json(await service.ingest({ path: parsed.data.path }, parsed.data.mode));
+      } catch (error) {
+        logError("ingest_failed", error);
+        const message = error instanceof Error ? error.message : "Ingestion failed";
+        const status =
+          error instanceof MissingCredentialError || error instanceof QdrantUnavailableError
+            ? 503
+            : 422;
+        res.status(status).json({ error: message });
+      }
+    },
+  );
 
   app.post("/api/chat", async (req: Request, res: Response) => {
     const parsed = chatSchema.safeParse(req.body);

@@ -4,11 +4,16 @@
 # Prerequisites (one-time, not automated here):
 #   - Artifact Registry repo:  gcloud artifacts repositories create ylookup \
 #       --repository-format=docker --location=europe-west2
-#   - GKE cluster with Workload Identity for Vertex AI access
-#   - Cloud Build SA needs roles/container.developer + artifactregistry.writer
+#   - GKE cluster; pods use the node's default compute SA
+#     (394788628847-compute@developer.gserviceaccount.com) — grant it
+#     roles/aiplatform.user for Vertex AI access (see deploy/k8s/app.yaml)
+#   - The build runs as the default compute SA too; it needs
+#     roles/container.developer + roles/artifactregistry.writer
+#     (+ roles/storage.admin on the build bucket if not already granted)
 #
 # Trigger manually with:
-#   gcloud builds submit --project=priv-mkt-hack26lon-3752
+#   gcloud builds submit --project=priv-mkt-hack26lon-3752 \
+#     --service-account=projects/priv-mkt-hack26lon-3752/serviceAccounts/394788628847-compute@developer.gserviceaccount.com
 
 substitutions:
   _REGION: europe-west2

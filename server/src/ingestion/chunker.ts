@@ -1,13 +1,14 @@
 import { Document } from "@langchain/core/documents";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { config } from "../config.js";
-import type { SheetDocument } from "./xlsx.js";
+import { sheetLabel, type SheetDocument } from "./xlsx.js";
 
 /**
  * Chunk sheet documents with the generic recursive splitter (splits on blank
  * lines, then row lines — a good fit for the row-per-line sheet format). Each
- * chunk is prefixed with its sheet name so the embedding captures provenance
- * and the LLM can cite it.
+ * chunk is prefixed with its sheet name AND a one-line description of what
+ * the sheet is, so the embedding captures the sheet's semantics (not just
+ * row tokens) and the LLM can cite it.
  */
 export async function chunkSheetDocuments(sheetDocuments: SheetDocument[]): Promise<Document[]> {
   const splitter = new RecursiveCharacterTextSplitter({
@@ -20,7 +21,7 @@ export async function chunkSheetDocuments(sheetDocuments: SheetDocument[]): Prom
     chunks.forEach((chunk, index) => {
       docs.push(
         new Document({
-          pageContent: `Sheet: ${sheetDoc.metadata.sheet}\n\n${chunk}`,
+          pageContent: `Sheet: ${sheetLabel(sheetDoc.metadata.sheet)}\n\n${chunk}`,
           metadata: {
             sheet: sheetDoc.metadata.sheet,
             part: sheetDoc.metadata.part,
