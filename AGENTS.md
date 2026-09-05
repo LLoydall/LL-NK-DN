@@ -62,7 +62,8 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
     uploaded workbooks (the sample dataset isn't mounted in-cluster); locally
     and in compose both roots work.
 - `deploy/k8s/` — GKE manifests: qdrant (StatefulSet + PVC), engine (Deployment +
-  uploads PVC), app (LoadBalancer).
+  uploads PVC), app (ClusterIP only, no public LB — access via
+  `kubectl port-forward svc/app 8080:80`).
 - `Dockerfile` (root) — app image (web + server). `engine/Dockerfile` — engine image.
 - `cloudbuild.yaml` — Cloud Build: build/push both images to Artifact Registry, deploy to GKE.
 - `sample-data-and-call-transcripts/` — raw anonymised datasets; never modified, never

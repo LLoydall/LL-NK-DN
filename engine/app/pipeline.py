@@ -13,7 +13,7 @@
 
 import json
 
-from app.operators import OPERATOR_IMPL, lookup_unmatched
+from app.operators import OPERATOR_IMPL, lookup_unmatched, table_value_keys
 
 _GL_EXAMPLE = "source/Investor-Level GL - Q2 activity - all entities (anonymised).xlsx"
 

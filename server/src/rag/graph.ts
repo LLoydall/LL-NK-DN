@@ -120,12 +120,22 @@ export function buildChatGraph(deps: ChatGraphDeps) {
     const sourceLabel = deps.index.indexMetadata?.sourceLabel ?? "the ingested workbook";
     const history = state.history.slice(-config.MAX_HISTORY_MESSAGES);
     const chain = ANSWER_PROMPT.pipe(deps.model);
-    const response = await chain.invoke({
-      sourceLabel,
-      context,
-      history,
-      question: state.question,
-    });
+    let response;
+    try {
+      response = await chain.invoke({
+        sourceLabel,
+        context,
+        history,
+        question: state.question,
+      });
+    } catch (error) {
+      // See pipeline.ts: label model-call failures so quota/retry storms
+      // don't surface as bare TypeErrors.
+      throw new Error(
+        `the chat model call failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     const answer =
       typeof response.content === "string"
         ? response.content

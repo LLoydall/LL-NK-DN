@@ -160,12 +160,23 @@ export function buildPipelineGraph(deps: PipelineGraphDeps) {
       ? `\n\nYour previous draft failed validation:\n${state.feedback}\nFix these errors and return a corrected pipeline.`
       : "";
     const chain = PIPELINE_PROMPT.pipe(deps.model);
-    const response = await chain.invoke({
-      operatorCatalog: JSON.stringify(state.catalog, null, 2),
-      context: state.context,
-      question: state.question,
-      feedback,
-    });
+    let response;
+    try {
+      response = await chain.invoke({
+        operatorCatalog: JSON.stringify(state.catalog, null, 2),
+        context: state.context,
+        question: state.question,
+        feedback,
+      });
+    } catch (error) {
+      // The Vertex/LangChain stack can surface a bare TypeError after a long
+      // retry storm (e.g. quota exhaustion) — label the failing stage so the
+      // logs and the UI say something honest.
+      throw new Error(
+        `the chat model call failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     return { draftText: messageText(response), attempts: state.attempts + 1 };
   }
 

@@ -83,6 +83,21 @@ def _table(name):
     return mapping
 
 
+def table_value_keys(name):
+    """Valid `select` value keys for a table: {"target"} for simple value
+    maps, the value-dict keys for dict-valued maps, or None when the table is
+    unknown or not loaded (structural validation only in that case)."""
+    attr = _TABLE_ATTRS.get(name)
+    if attr is None:
+        return None
+    mapping = getattr(mp, attr, {})
+    if not mapping:
+        return None
+    if isinstance(next(iter(mapping.values())), dict):
+        return set(next(iter(mapping.values())).keys())
+    return {"target"}
+
+
 def _make_keys(df, on):
     if not isinstance(on, list) or not 1 <= len(on) <= 2:
         raise ValueError("'on' must be a list of 1 or 2 column names")
@@ -104,6 +119,7 @@ def lookup_unmatched(df, table, on):
 def op_lookup(df, table, on, select, on_missing="review"):
     mapping = _table(table)
     dict_valued = isinstance(next(iter(mapping.values()), None), dict)
+    valid_keys = table_value_keys(table) or set()
 
     for value_key in select.values():
         if value_key == "target" and dict_valued:
@@ -114,6 +130,13 @@ def op_lookup(df, table, on, select, on_missing="review"):
         if value_key != "target" and not dict_valued:
             raise ValueError(
                 f"table {table!r} is a simple value map; use value key 'target'"
+            )
+        # Reject unknown value keys loudly — silently emitting nulls would
+        # look like unmapped rows downstream.
+        if value_key not in valid_keys:
+            raise ValueError(
+                f"table {table!r} has no value key {value_key!r}; "
+                f"available: {sorted(valid_keys)}"
             )
 
     keys = _make_keys(df, on)
