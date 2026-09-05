@@ -28,6 +28,9 @@ No LLM calls in this service.
 from typing import Any
 
 from fastapi import FastAPI
+
+# Deterministic checks — wired into POST /check as the engine work lands.
+from app.deterministic_layer import balance_reconciliation, debit_credit_validation, validate_mapping, validate_coa_mapping
 from pydantic import BaseModel
 
 app = FastAPI(title="ylookup-engine", version="0.1.0")

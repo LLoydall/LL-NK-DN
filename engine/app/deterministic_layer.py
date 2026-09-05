@@ -1,7 +1,8 @@
 # deterministic_layer.py
 
 import pandas as pd
-import mapping as mp
+
+from app import mapping as mp
 
 
 # =========================================================
@@ -114,21 +115,21 @@ def validate_coa_mapping(gl_account, transaction_type):
 
 
 # =========================================================
-# TESTS
+# TESTS (manual smoke check)
 # =========================================================
 
-entity_result = validate_mapping(
-    "legal_entity",
-    "Chalbury Co-Invest L.P.",
-    mp.legal_entity_map
-)
+if __name__ == "__main__":
+    entity_result = validate_mapping(
+        "legal_entity",
+        "Chalbury Co-Invest L.P.",
+        mp.legal_entity_map
+    )
 
-print(entity_result)
+    print(entity_result)
 
+    coa_result = validate_coa_mapping(
+        "10010 - Cash",
+        "Cash Received"
+    )
 
-coa_result = validate_coa_mapping(
-    "10010 - Cash",
-    "Cash Received"
-)
-
-print(coa_result)
+    print(coa_result)

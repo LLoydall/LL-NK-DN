@@ -22,6 +22,9 @@ substitutions:
 
 options:
   machineType: E2_HIGHCPU_8
+  # Required when the build runs as a user-specified SA (see Makefile deploy):
+  # the default logs bucket isn't allowed then, so send logs to Cloud Logging.
+  logging: CLOUD_LOGGING_ONLY
 
 timeout: 1200s
 

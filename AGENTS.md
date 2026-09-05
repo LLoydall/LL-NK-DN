@@ -24,7 +24,9 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
 - `web/` — React + Vite frontend, proxies `/api` to the server in dev. Tabs: Ask (chat),
   Review queue (human approval step).
 - `engine/` — Python FastAPI deterministic engine. Pure checks only, no LLM calls.
-  Currently a contract stub (`GET /healthz`, `POST /check`).
+  HTTP contract is a stub (`GET /healthz`, `POST /check`); `app/mapping.py` loads
+  the dataset 02 reference workbook at import from `MAPPING_WORKBOOK` (compose
+  mounts it read-only at `/data`; local default resolves to the repo copy).
 - `deploy/k8s/` — GKE manifests: qdrant (StatefulSet + PVC), engine, app (LoadBalancer).
 - `Dockerfile` (root) — app image (web + server). `engine/Dockerfile` — engine image.
 - `cloudbuild.yaml` — Cloud Build: build/push both images to Artifact Registry, deploy to GKE.

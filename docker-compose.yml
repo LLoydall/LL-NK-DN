@@ -19,6 +19,11 @@ services:
       context: ./engine
     ports:
       - "8081:8080"
+    environment:
+      MAPPING_WORKBOOK: "/data/Tranche 1 - reference and verified loader v4c (anonymised).xlsx"
+    volumes:
+      # Reference workbook is mounted, not baked into the image
+      - ./sample-data-and-call-transcripts/02-investor-level-gl-to-loader/output:/data:ro
 
   app:
     build:

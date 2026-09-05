@@ -1,7 +1,17 @@
+import os
+from pathlib import Path
+
 import pandas as pd
 
-
-FILE_PATH = r"C:\hackathon\fund-validator\datas\output\Tranche 1 - reference and verified loader v4c (anonymised).xlsx"
+# Reference workbook (dataset 02 output). Containers get it via a mounted
+# volume + MAPPING_WORKBOOK; the local default resolves relative to this file
+# (repo root = two levels up from engine/app/mapping.py).
+DEFAULT_WORKBOOK = (
+    Path(__file__).resolve().parents[2]
+    / "sample-data-and-call-transcripts/02-investor-level-gl-to-loader/output"
+    / "Tranche 1 - reference and verified loader v4c (anonymised).xlsx"
+)
+FILE_PATH = os.environ.get("MAPPING_WORKBOOK", str(DEFAULT_WORKBOOK))
 
 # =========================================================
 # 1. LEGAL ENTITY MAPPING
@@ -109,8 +119,6 @@ for _, row in coa_df.iterrows():
         "new_transaction_type": new_trans
     }
 
-print(list(coa_map.items())[:5])
-
 gl_account_map = dict(
     zip(
         coa_df["Helio GL Account"],
@@ -129,6 +137,20 @@ transaction_type_map = dict(
         coa_df["Verado II TransType (Default)"]
     )
 )
+
+
+# Transaction-type-only fallback for validate_coa_mapping: first row seen for
+# each trans type wins.
+transaction_only_map = {}
+
+for _, row in coa_df.iterrows():
+    trans = row["Helio Trans Type"]
+
+    if trans not in transaction_only_map:
+        transaction_only_map[trans] = {
+            "new_gl_account": row["Verado II GL Account Code"],
+            "new_transaction_type": row["Verado II TransType (Default)"]
+        }
 
 
 # =========================================================
@@ -161,32 +183,35 @@ batch_priority_map = dict(
 
 
 # =========================================================
-# PRINT SMALL SAMPLE
+# PRINT SMALL SAMPLE (manual inspection only)
 # =========================================================
 
-print("Legal entities:")
-print(list(legal_entity_map.items())[:5])
+if __name__ == "__main__":
+    print(list(coa_map.items())[:5])
 
-print("\nInvestors:")
-print(list(investor_map.items())[:5])
+    print("\nLegal entities:")
+    print(list(legal_entity_map.items())[:5])
 
-print("\nDeals:")
-print(list(deal_map.items())[:5])
+    print("\nInvestors:")
+    print(list(investor_map.items())[:5])
 
-print("\nPositions:")
-print(list(position_map.items())[:5])
+    print("\nDeals:")
+    print(list(deal_map.items())[:5])
 
-print("\nVehicles:")
-print(list(vehicle_map.items())[:5])
+    print("\nPositions:")
+    print(list(position_map.items())[:5])
 
-print("\nGL accounts:")
-print(list(gl_account_map.items())[:5])
+    print("\nVehicles:")
+    print(list(vehicle_map.items())[:5])
 
-print("\nTransaction types:")
-print(list(transaction_type_map.items())[:5])
+    print("\nGL accounts:")
+    print(list(gl_account_map.items())[:5])
 
-print("\nBatch types:")
-print(list(batch_type_map.items())[:5])
+    print("\nTransaction types:")
+    print(list(transaction_type_map.items())[:5])
 
-print("\nBatch priority:")
-print(list(batch_priority_map.items())[:5])
+    print("\nBatch types:")
+    print(list(batch_type_map.items())[:5])
+
+    print("\nBatch priority:")
+    print(list(batch_priority_map.items())[:5])
