@@ -1,0 +1,72 @@
+# App = Node server (API) + built React UI served from the same process.
+#
+# Vertex AI access: the pod must run as a GCP identity with
+# roles/aiplatform.user on project priv-mkt-hack26lon-3752. Recommended:
+# Workload Identity — bind this deployment's KSA to a GCP SA, e.g.
+#   gcloud iam service-accounts create ylookup-app
+#   gcloud projects add-iam-policy-binding priv-mkt-hack26lon-3752 \
+#     --member=serviceAccount:ylookup-app@priv-mkt-hack26lon-3752.iam.gserviceaccount.com \
+#     --role=roles/aiplatform.user
+# then set serviceAccountName: ylookup-app below and annotate the KSA.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      # serviceAccountName: ylookup-app   # uncomment once Workload Identity is set up
+      containers:
+        - name: app
+          # Replaced by Cloud Build (see cloudbuild.yaml deploy step)
+          image: APP_IMAGE
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: GCP_PROJECT_ID
+              value: "priv-mkt-hack26lon-3752"
+            - name: VERTEX_LOCATION
+              value: "europe-west2"
+            - name: QDRANT_URL
+              value: "http://qdrant:6333"
+            - name: ENGINE_URL
+              value: "http://engine:8080"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  type: LoadBalancer
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
