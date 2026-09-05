@@ -79,5 +79,6 @@ export const api = {
     request<ChatResponse>("/api/chat", { method: "POST", body: JSON.stringify({ question, history }) }),
   reviewCheck: (payload: unknown) =>
     request<ReviewCheckResponse>("/api/review/check", { method: "POST", body: JSON.stringify({ payload }) }),
+  validateMapping: () => request<{ ok: boolean; entity_result: unknown; coa_result: unknown }>("/api/validate_mapping"),
   clearIndex: () => request<{ cleared: boolean }>("/api/index", { method: "DELETE" }),
 };

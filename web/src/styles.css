@@ -488,6 +488,10 @@ button.small {
   margin-bottom: 16px;
 }
 
+.validate-mapping {
+  margin-bottom: 24px;
+}
+
 .review-table {
   width: 100%;
   border-collapse: collapse;

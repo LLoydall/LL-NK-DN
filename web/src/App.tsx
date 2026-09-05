@@ -350,6 +350,22 @@ function ReviewTab() {
         The deterministic checking engine is not implemented yet — approve responses
         will come back as stubs (or a 503 while the engine is unavailable).
       </div>
+      <section className="validate-mapping">
+        <h2>Validate Mapping</h2>
+        <button
+          onClick={async () => {
+            try {
+              const result = await api.validateMapping();
+              console.log("Validation result:", result);
+            } catch (error) {
+              console.error("Validation failed:", error);
+            }
+          }}
+        >
+          Validate Mapping
+        </button>
+      </section>
+
       <table className="review-table">
         <thead>
           <tr>

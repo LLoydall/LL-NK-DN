@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { log } from "./observability.js";
-import { checkBatch, type EngineCheckResponse } from "./engineClient.js";
+import { checkBatch, validateMapping, type EngineCheckResponse } from "./engineClient.js";
 import { chunkSheetDocuments } from "./ingestion/chunker.js";
 import { loadUploadedWorkbook, loadWorkbook } from "./ingestion/loader.js";
 import { RuleIndex } from "./rag/store.js";
@@ -141,6 +141,10 @@ export class MigrationService {
       throw new IndexNotReadyError();
     }
     return runChat(await this.ensureGraph(), question, toChatHistory(history));
+  }
+  
+  async validateMapping(): Promise<{ ok: boolean; entity_result: unknown; coa_result: unknown }> {
+    return validateMapping();
   }
 
   async reviewCheck(payload: unknown): Promise<{ engine: EngineCheckResponse; latencyMs: number }> {

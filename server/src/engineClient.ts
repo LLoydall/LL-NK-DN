@@ -43,3 +43,21 @@ export async function checkBatch(payload: unknown): Promise<EngineCheckResponse>
   }
   return (await response.json()) as EngineCheckResponse;
 }
+
+export async function validateMapping(): Promise<{ ok: boolean; entity_result: unknown; coa_result: unknown }> {
+  let response: Response;
+  try {
+    response = await fetch(`${config.ENGINE_URL}/validate_mapping`, {
+      method: "GET",
+      signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new EngineUnavailableError(`Engine unreachable at ${config.ENGINE_URL}`, {
+      cause: error,
+    });
+  }
+  if (!response.ok) {
+    throw new EngineUnavailableError(`Engine returned HTTP ${response.status}`);
+  }
+  return await response.json() as { ok: boolean; entity_result: unknown; coa_result: unknown };
+}

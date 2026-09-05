@@ -157,6 +157,21 @@ export function createApp(service: MigrationService): Express {
     }
   });
 
+  app.get("/api/validate_mapping", async (_req: Request, res: Response) => {
+    try {
+      const result = await service.validateMapping();
+      res.json(result);
+    } catch (error) {
+      logError("validate_mapping_failed", error);
+      if (error instanceof EngineUnavailableError) {
+        res.status(503).json({ error: error.message });
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Validation failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
   app.delete("/api/index", async (_req: Request, res: Response) => {
     await service.clearIndex();
     res.json({ cleared: true });

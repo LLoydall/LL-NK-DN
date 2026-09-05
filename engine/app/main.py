@@ -32,7 +32,7 @@ from fastapi import FastAPI
 # Deterministic checks — wired into POST /check as the engine work lands.
 from app.deterministic_layer import balance_reconciliation, debit_credit_validation, validate_mapping, validate_coa_mapping
 from pydantic import BaseModel
-
+from app import mapping as mp
 app = FastAPI(title="ylookup-engine", version="0.1.0")
 
 
@@ -66,3 +66,20 @@ def healthz() -> dict[str, bool]:
 def check(request: CheckRequest) -> CheckResponse:
     # Stub: real deterministic checks land here (see module docstring).
     return CheckResponse(status="not_implemented", checks=[])
+
+@app.get("/validate_mapping")
+def validate_mapping_endpoint() -> dict[str, Any]:
+    entity_result = validate_mapping(
+            "legal_entity",
+            "Chalbury Co-Invest L.P.",
+            mp.legal_entity_map
+        )
+    print(entity_result)
+
+    coa_result = validate_coa_mapping(
+        "10010 - Cash",
+        "Cash Received"
+    )
+
+    print(coa_result)
+    return {"ok": True, "entity_result": entity_result, "coa_result": coa_result}
