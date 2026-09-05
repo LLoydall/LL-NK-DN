@@ -59,9 +59,11 @@ OPERATOR_CATALOG = {
             "Available tables: 'legal_entity', 'investor', 'deal', 'position', "
             "'vehicle', 'batch_type' (simple value maps; select with value key "
             "'target') and 'coa', 'transaction_only' (dict-valued maps; select "
-            "value keys 'new_gl_account' and/or 'new_transaction_type'). 'coa' "
+            "value keys 'new_gl_account' and/or 'new_transaction_type' ONLY). 'coa' "
             "is keyed by (GL account, trans type) so pass both columns in 'on'; "
-            "'transaction_only' is keyed by trans type alone."
+            "'transaction_only' is keyed by trans type alone. Batch type comes "
+            "ONLY from the 'batch_type' table (trans type -> batch type) — the "
+            "'coa' table cannot provide it."
         ),
         "params": {
             "table": _p(
@@ -272,9 +274,12 @@ OPERATOR_CATALOG = {
     "assert_debit_credit": {
         "kind": "terminal",
         "description": (
-            "Sum the debit and credit columns; PASS when the totals differ by "
-            "less than 0.01. Produces a check result, not a table — use as the "
-            "last step of a pipeline."
+            "Sum the debit and credit columns across the WHOLE input frame; "
+            "PASS when the totals differ by less than 0.01. Produces a check "
+            "result, not a table — use as the last step of a pipeline. Note: "
+            "a row-capped sample of journal lines will not foot; for a "
+            "meaningful reconciliation first 'aggregate' to per-entity or "
+            "per-batch totals, then assert on those."
         ),
         "params": {
             "debit": _p("string", True, "Debit amount column."),
@@ -356,6 +361,41 @@ def _check_params(op_name, spec, params, label, errors):
             )
 
 
+def _check_lookup_select(params, where, errors):
+    table = params.get("table")
+    select = params.get("select")
+    if not isinstance(table, str) or not isinstance(select, dict):
+        return  # structural errors already reported by _check_params
+    keys = table_value_keys(table)
+    if keys is None:
+        return  # table unknown (enum already flags it) or not loaded
+    for out_col, value_key in select.items():
+        if value_key not in keys:
+            errors.append(
+                f"{where}: table {table!r} has no value key {value_key!r} "
+                f"(for output column {out_col!r}); available: {sorted(keys)}"
+            )
+
+
+def _check_duplicate_output_columns(op_name, params, where, errors):
+    # Params-visible duplicates: rename {a: "x", b: "x"} or select ["x", "x"]
+    # deterministically produce duplicate columns — flag before execution.
+    # (A rename target colliding with an untouched column is data-dependent
+    # and is caught at run time instead.)
+    if op_name == "rename" and isinstance(params.get("columns"), dict):
+        names = list(params["columns"].values())
+    elif op_name == "select" and isinstance(params.get("columns"), list):
+        names = params["columns"]
+    else:
+        return
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        errors.append(
+            f"{where}: op {op_name!r} would produce duplicate column(s): "
+            + ", ".join(map(str, dupes))
+        )
+
+
 def validate_pipeline(doc):
     """Return a list of human-readable error strings ([] means valid)."""
 
@@ -393,6 +433,12 @@ def validate_pipeline(doc):
             params = None
         if spec is not None and params is not None:
             _check_params(op_name, spec, params, where, errors)
+            # Semantic checks beyond the catalog (skipped when crosswalk
+            # tables aren't loaded, e.g. before a mapping workbook upload).
+            if op_name == "lookup":
+                _check_lookup_select(params, where, errors)
+            elif op_name in ("rename", "select"):
+                _check_duplicate_output_columns(op_name, params, where, errors)
 
         uses = step.get("uses")
         if uses is not None and not (
@@ -487,6 +533,15 @@ def run_pipeline(doc, max_rows=200):
                 result["checks"] = impl(frames[input_id], **params)
                 results.append(result)
                 continue
+
+            # A step whose output has duplicate columns (e.g. a rename mapping
+            # two columns to the same name) is a step error — fail loudly here
+            # rather than at sample serialization, and skip its dependents.
+            dupes = frame.columns[frame.columns.duplicated()].unique().tolist()
+            if dupes:
+                raise ValueError(
+                    "step produced duplicate column(s): " + ", ".join(map(str, dupes))
+                )
 
             frames[step["id"]] = frame
             result["status"] = "ok"

@@ -107,6 +107,34 @@ def test_source_must_not_have_uses():
     assert any("must have no input" in e for e in errors)
 
 
+def test_lookup_select_rejects_unknown_value_key():
+    # 'coa' values only carry new_gl_account / new_transaction_type — batch
+    # type lives in the separate 'batch_type' table. (Uses the real loaded
+    # crosswalk tables.)
+    doc = {
+        "steps": [
+            {"id": "src", "op": "read_sheet",
+             "params": {"source": "gl.xlsx", "sheet": "GL"}},
+            {"id": "map", "op": "lookup",
+             "params": {"table": "coa", "on": ["GL Account", "Trans Type"],
+                        "select": {"Mapped Batch Type": "batch_type"}}},
+        ]
+    }
+    errors = validate_pipeline(doc)
+    assert any("no value key 'batch_type'" in e for e in errors)
+    assert any("new_gl_account" in e for e in errors)
+
+
+def test_rename_to_duplicate_names_rejected_at_validate():
+    doc = _valid_pipeline()
+    doc["steps"][1] = {
+        "id": "ren", "op": "rename",
+        "params": {"columns": {"Debit": "amount", "Credit": "amount"}},
+    }
+    errors = validate_pipeline(doc)
+    assert any("duplicate column(s): amount" in e for e in errors)
+
+
 # =========================================================
 # EXECUTION (sheet loading monkeypatched to in-memory data)
 # =========================================================
@@ -224,6 +252,43 @@ def test_assert_balance_fail():
     assert checks["status"] == "FAIL"
     assert checks["expected_closing"] == 370.0
     assert abs(checks["difference"]) >= 0.01
+
+
+# =========================================================
+# LOOKUP VALUE-KEY + DUPLICATE-COLUMN GUARDS
+# =========================================================
+
+def test_op_lookup_rejects_unknown_value_key_loudly():
+    try:
+        OPERATOR_IMPL["lookup"](
+            FAKE_GL.copy(), "coa", ["Legal Entity", "Legal Entity"],
+            {"Mapped Batch Type": "batch_type"},
+        )
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "no value key 'batch_type'" in str(exc)
+        assert "new_gl_account" in str(exc)
+
+
+def test_duplicate_columns_error_and_skip_dependents(fake_read_source):
+    # Renaming onto an EXISTING column is data-dependent, so it passes
+    # validation and must fail at run time with dependents skipped.
+    doc = {
+        "steps": [
+            {"id": "read", "op": "read_sheet",
+             "params": {"source": "fake.xlsx", "sheet": "GL"}},
+            {"id": "ren", "op": "rename",
+             "params": {"columns": {"Debit": "Credit"}}},
+            {"id": "chk", "op": "assert_no_nulls",
+             "params": {"columns": ["Credit"]}},
+        ]
+    }
+    result = run_pipeline(doc)
+    steps = {s["id"]: s for s in result["steps"]}
+    assert steps["ren"]["status"] == "error"
+    assert "duplicate column(s): Credit" in steps["ren"]["error"]
+    # Dependents of the failed step are skipped, not fed the broken frame.
+    assert steps["chk"]["status"] == "skipped"
 
 
 # =========================================================
