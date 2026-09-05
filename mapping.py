@@ -1,5 +1,6 @@
 import pandas as pd
 
+
 FILE_PATH = r"C:\hackathon\fund-validator\datas\output\Tranche 1 - reference and verified loader v4c (anonymised).xlsx"
 
 # =========================================================
@@ -86,14 +87,29 @@ vehicle_map = dict(
 )
 
 
-# =========================================================
-# 6. CHART OF ACCOUNTS MAPPING
-# =========================================================
-
+#Chart Account Mapping...................................
 coa_df = pd.read_excel(
     FILE_PATH,
     sheet_name="CoA Mapping"
 )
+
+coa_map = {}
+
+for _, row in coa_df.iterrows():
+    old_gl = row["Helio GL Account"]
+    old_trans = row["Helio Trans Type"]
+
+    new_gl = row["Verado II GL Account Code"]
+    new_trans = row["Verado II TransType (Default)"]
+
+    key = (old_gl, old_trans)
+
+    coa_map[key] = {
+        "new_gl_account": new_gl,
+        "new_transaction_type": new_trans
+    }
+
+print(list(coa_map.items())[:5])
 
 gl_account_map = dict(
     zip(
