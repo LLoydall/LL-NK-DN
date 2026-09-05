@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+dist
+**/node_modules
+**/dist
+*.tsbuildinfo
+# Raw data is ingested at runtime, never baked into the image
+sample-data-and-call-transcripts
+data
+*.md
+!README.md
