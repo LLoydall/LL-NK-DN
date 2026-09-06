@@ -51,7 +51,7 @@ const envSchema = z.object({
   // embeddings model. Max 250 instances per Vertex request.
   EMBED_BATCH_SIZE: z.coerce.number().int().min(1).max(250).default(250),
   // Pause between embedding batches to stay under requests-per-minute quota.
-  EMBED_BATCH_DELAY_MS: z.coerce.number().int().min(0).default(1_000),
+  EMBED_BATCH_DELAY_MS: z.coerce.number().int().min(0).default(2_500),
   // Retries per batch on 429/RESOURCE_EXHAUSTED with exponential backoff.
   EMBED_MAX_RETRIES: z.coerce.number().int().min(0).default(5),
 });

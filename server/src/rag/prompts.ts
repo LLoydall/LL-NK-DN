@@ -65,6 +65,7 @@ Pipeline format — a JSON object:
 - ids are short slugs. A step reads its input from the step(s) in "uses"; omit "uses" to chain from the previous step.
 - kind "source" operators read data and take no input; kind "transform" operators take exactly one input; kind "terminal" operators run a check and output no data (place them last).
 - Reference ONLY sheets, tables, and column names that appear in the retrieved context below — never invent names.
+- When a mapped or derived value should replace a source column (e.g. the loader's Trans Type comes from the mapping, not the source), use rename with on_collision "replace" — renaming onto an existing column otherwise errors.
 - Keep the pipeline small and legible: mirror the migration steps in the context (read input → apply crosswalk lookups → derive output columns → run reconciliation checks).{feedback}
 
 Respond with exactly two fenced blocks and nothing else:

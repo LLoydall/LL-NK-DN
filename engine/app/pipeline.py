@@ -240,11 +240,22 @@ OPERATOR_CATALOG = {
     },
     "rename": {
         "kind": "transform",
-        "description": "Rename columns.",
+        "description": (
+            "Rename columns. Renaming onto a column that already exists errors "
+            "unless on_collision is 'replace' — use 'replace' when a mapped or "
+            "derived value should supersede its source column (e.g. mapped "
+            "'New Trans Type' replacing source 'Trans Type')."
+        ),
         "params": {
             "columns": _p("object", True, "{old_name: new_name}."),
+            "on_collision": _p(
+                "string", False,
+                "'error' (default) rejects renames onto existing columns; "
+                "'replace' overwrites them.",
+                default="error", enum=["error", "replace"],
+            ),
         },
-        "example": {"columns": {"Debits (Entity Currency)": "debit", "Credits (Entity Currency)": "credit"}},
+        "example": {"columns": {"New Trans Type": "Trans Type"}, "on_collision": "replace"},
     },
     "select": {
         "kind": "transform",
@@ -274,18 +285,24 @@ OPERATOR_CATALOG = {
     "assert_debit_credit": {
         "kind": "terminal",
         "description": (
-            "Sum the debit and credit columns across the WHOLE input frame; "
-            "PASS when the totals differ by less than 0.01. Produces a check "
-            "result, not a table — use as the last step of a pipeline. Note: "
-            "a row-capped sample of journal lines will not foot; for a "
-            "meaningful reconciliation first 'aggregate' to per-entity or "
-            "per-batch totals, then assert on those."
+            "Check that debits and credits foot. Without 'group_by': sum both "
+            "columns across the whole frame (note: a row-capped sample of "
+            "journal lines will not foot). With 'group_by': each group must "
+            "balance on its own — the right way to reconcile per entity or "
+            "per batch; the result reports how many groups are unbalanced "
+            "with examples. A group truncated by the row cap can look "
+            "unbalanced — filter first or raise the row cap for full checks."
         ),
         "params": {
             "debit": _p("string", True, "Debit amount column."),
             "credit": _p("string", True, "Credit amount column."),
+            "group_by": _p(
+                "array", False,
+                "Optional columns to group by (e.g. ['Legal Entity', 'Batch ID']); "
+                "each group is checked separately.",
+            ),
         },
-        "example": {"debit": "Debits (Entity Currency)", "credit": "Credits (Entity Currency)"},
+        "example": {"debit": "Debits (Entity Currency)", "credit": "Credits (Entity Currency)", "group_by": ["Legal Entity", "Batch ID"]},
     },
     "assert_balance": {
         "kind": "terminal",
@@ -553,4 +570,22 @@ def run_pipeline(doc, max_rows=200):
 
         results.append(result)
 
-    return {"ok": True, "steps": results}
+    # Best attempt at the final data: the last frame-producing step's output
+    # (row-capped, all rows). When that step errored or was skipped, fall back
+    # to the most recent successful frame and say so — downstream validation
+    # decides how much to trust it.
+    output = None
+    producers = [s for s in steps if OPERATOR_CATALOG[s["op"]]["kind"] != "terminal"]
+    for step in reversed(producers):
+        frame = frames.get(step["id"])
+        if frame is not None:
+            output = {
+                "step": step["id"],
+                "complete": step is producers[-1],
+                "rowCount": int(len(frame)),
+                "columns": [str(c) for c in frame.columns],
+                "rows": json.loads(frame.to_json(orient="records", date_format="iso")),
+            }
+            break
+
+    return {"ok": True, "steps": results, "output": output}

@@ -811,3 +811,7 @@ button.small {
   border-radius: 6px;
   overflow: hidden;
 }
+
+.maxrows-input {
+  width: 90px;
+}

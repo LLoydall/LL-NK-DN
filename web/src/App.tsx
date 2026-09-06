@@ -490,6 +490,7 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
   const [paramsErrors, setParamsErrors] = useState<Record<string, string>>({});
   const [runResults, setRunResults] = useState<Record<string, PipelineStepResult>>({});
   const [running, setRunning] = useState(false);
+  const [maxRows, setMaxRows] = useState(200);
   const [nodes, setNodes, onNodesChange] = useNodesState<StepFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [flow, setFlow] = useState<ReactFlowInstance<StepFlowNode, Edge> | null>(null);
@@ -593,7 +594,7 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
     setRunning(true);
     setError(null);
     try {
-      const res: PipelineRunResponse = await api.runPipeline({ ...sketch.pipeline, steps });
+      const res: PipelineRunResponse = await api.runPipeline({ ...sketch.pipeline, steps }, maxRows);
       if (res.steps) {
         setRunResults(Object.fromEntries(res.steps.map((r) => [r.id, r])));
       }
@@ -619,9 +620,21 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
           {busy ? "Sketching…" : "Sketch pipeline"}
         </button>
         {sketch?.pipeline && (
-          <button onClick={run} disabled={running}>
-            {running ? "Running…" : "Run on sample data"}
-          </button>
+          <>
+            <input
+              type="number"
+              className="maxrows-input"
+              min={1}
+              max={10000}
+              value={maxRows}
+              onChange={(e) => setMaxRows(Math.max(1, Math.min(10_000, Number(e.target.value) || 200)))}
+              title="Rows read per source sheet (row cap)"
+              disabled={running}
+            />
+            <button onClick={run} disabled={running}>
+              {running ? "Running…" : "Run on sample data"}
+            </button>
+          </>
         )}
       </div>
       {error && <div className="error-banner">{error}</div>}
