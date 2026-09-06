@@ -22,13 +22,20 @@ export class EngineUnavailableError extends Error {
 // Deterministic checks are fast; if the engine takes longer than this it is
 // down or wedged, and the caller should get a 503 rather than a hung request.
 const ENGINE_TIMEOUT_MS = 10_000;
+// Pipeline runs parse whole workbooks server-side (first read of a large
+// sheet takes seconds even row-capped); give them real room.
+const ENGINE_SLOW_TIMEOUT_MS = 60_000;
 
-async function engineFetch(path: string, init?: RequestInit): Promise<Response> {
+async function engineFetch(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = ENGINE_TIMEOUT_MS,
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${config.ENGINE_URL}${path}`, {
       ...init,
-      signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new EngineUnavailableError(`Engine unreachable at ${config.ENGINE_URL}`, {
@@ -80,21 +87,35 @@ export interface PipelineStepResult {
   error?: string;
 }
 
+/** Best attempt at the pipeline's final data (falls back on step errors). */
+export interface PipelineOutput {
+  /** Which step produced it. */
+  step: string;
+  /** True when the final frame-producing step succeeded; false on fallback. */
+  complete: boolean;
+  rowCount: number;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+}
+
 export interface PipelineRunResponse {
   ok: boolean;
   steps?: PipelineStepResult[];
   errors?: string[];
+  output?: PipelineOutput | null;
 }
 
 /** The atomic operators the engine can execute (fed verbatim into prompts). */
 export async function getOperators(): Promise<{ operators: OperatorCatalog }> {
-  return (await (await engineFetch("/operators")).json()) as { operators: OperatorCatalog };
+  return (await (
+    await engineFetch("/operators", undefined, ENGINE_SLOW_TIMEOUT_MS)
+  ).json()) as { operators: OperatorCatalog };
 }
 
 /** Structural validation of a pipeline against the operator catalog. */
 export async function validatePipeline(pipeline: unknown): Promise<PipelineValidateResponse> {
   return (await (
-    await engineFetch("/pipeline/validate", postJson({ pipeline }))
+    await engineFetch("/pipeline/validate", postJson({ pipeline }), ENGINE_SLOW_TIMEOUT_MS)
   ).json()) as PipelineValidateResponse;
 }
 
@@ -104,7 +125,7 @@ export async function runPipeline(
   maxRows?: number,
 ): Promise<PipelineRunResponse> {
   return (await (
-    await engineFetch("/pipeline/run", postJson({ pipeline, max_rows: maxRows }))
+    await engineFetch("/pipeline/run", postJson({ pipeline, max_rows: maxRows }), ENGINE_SLOW_TIMEOUT_MS)
   ).json()) as PipelineRunResponse;
 }
 
@@ -124,7 +145,7 @@ export async function uploadData(
     method: "POST",
     headers: { "content-type": "application/octet-stream" },
     body: new Uint8Array(data),
-  });
+  }, ENGINE_SLOW_TIMEOUT_MS);
   return (await response.json()) as { ok: boolean; name: string; bytes: number };
 }
 

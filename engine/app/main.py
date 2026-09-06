@@ -99,6 +99,11 @@ class PipelineRunRequest(BaseModel):
     pipeline: dict[str, Any]
     max_rows: int = 200
 
+# class PipelineValidateAgainstKnownMappingRequest(BaseModel):
+#     pipeline: dict[str, Any]
+#     max_rows: int = 200
+#     known_mapping_function: str
+
 
 @app.get("/operators")
 def operators() -> dict[str, Any]:
@@ -111,6 +116,10 @@ def pipeline_validate(request: PipelineValidateRequest) -> dict[str, Any]:
     errors = validate_pipeline(request.pipeline)
     return {"ok": not errors, "errors": errors}
 
+# @app.post("/pipeline/validate-against-known-mapping")
+# def pipeline_validate_against_known_mapping(request: PipelineValidateAgainstKnownMappingRequest) -> dict[str, Any]:
+#     errors = validate_pipeline_against_known_mapping(request.pipeline, request.max_rows, request.known_mapping_function)
+#     return {"ok": not errors, "errors": errors}
 
 @app.post("/pipeline/run")
 def pipeline_run(request: PipelineRunRequest) -> dict[str, Any]:

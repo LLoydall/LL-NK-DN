@@ -43,18 +43,34 @@ def _resolve_inside(root, source):
     return path
 
 
+# Workbook parses are the dominant run cost (a full 34k-row sheet takes ~9s
+# with openpyxl), so reads are row-capped at parse time and cached per
+# (path, sheet, max_rows); a changed file mtime invalidates the entry.
+_READ_CACHE = {}
+_READ_CACHE_MAX = 8
+
+
 def read_source(source, sheet, max_rows):
     """Read `sheet` from a workbook living under UPLOADS_DIR or DATA_DIR.
 
     `source` is a filename or relative path; it must resolve inside one of the
     data roots or a ValueError is raised. Uploaded workbooks (UPLOADS_DIR) win
-    over same-named dataset files.
+    over same-named dataset files. At most `max_rows` rows are read.
     """
 
     for root in (mp.UPLOADS_DIR, mp.DATA_DIR):
         path = _resolve_inside(root, source)
         if path.is_file():
-            return pd.read_excel(path, sheet_name=sheet).head(max_rows)
+            key = (str(path), sheet, max_rows)
+            mtime = path.stat().st_mtime
+            cached = _READ_CACHE.get(key)
+            if cached and cached[0] == mtime:
+                return cached[1].copy()
+            frame = pd.read_excel(path, sheet_name=sheet, nrows=max_rows).head(max_rows)
+            if len(_READ_CACHE) >= _READ_CACHE_MAX:
+                _READ_CACHE.pop(next(iter(_READ_CACHE)))
+            _READ_CACHE[key] = (mtime, frame)
+            return frame.copy()
 
     raise ValueError(f"source {source!r} not found under the data roots")
 
@@ -293,8 +309,14 @@ def op_filter(df, column, op, value=None):
     return df[mask].reset_index(drop=True)
 
 
-def op_rename(df, columns):
-    return df.rename(columns=columns)
+def op_rename(df, columns, on_collision="error"):
+    out = df.copy()
+    if on_collision == "replace":
+        # Intentional overwrite, e.g. a mapped value superseding its source
+        # column: drop the rename targets that already exist first.
+        targets = [new for old, new in columns.items() if new != old and new in out.columns]
+        out = out.drop(columns=targets)
+    return out.rename(columns=columns)
 
 
 def op_select(df, columns):
@@ -337,9 +359,33 @@ def _plain(value):
     return value
 
 
-def op_assert_debit_credit(df, debit, credit):
-    totals = _totals(df, {"debit": debit, "credit": credit})
-    result = debit_credit_validation([totals["debit"]], [totals["credit"]])
+def op_assert_debit_credit(df, debit, credit, group_by=None):
+    debits = pd.to_numeric(df[debit], errors="coerce").fillna(0)
+    credits = pd.to_numeric(df[credit], errors="coerce").fillna(0)
+
+    if group_by:
+        for col in group_by:
+            if col not in df.columns:
+                raise ValueError(f"column {col!r} not in frame")
+        # Per-group footing: every group must balance on its own.
+        diffs = (debits - credits).groupby([df[col] for col in group_by]).sum()
+        unbalanced = diffs[diffs.abs() >= 0.01]
+        examples = []
+        for key, diff in unbalanced.head(5).items():
+            key_parts = key if isinstance(key, tuple) else (key,)
+            examples.append({
+                "group": {col: _plain(part) for col, part in zip(group_by, key_parts)},
+                "difference": _plain(diff),
+            })
+        return {
+            "status": "PASS" if unbalanced.empty else "FAIL",
+            "groups": int(len(diffs)),
+            "unbalanced": int(len(unbalanced)),
+            "examples": examples,
+            "rows": int(len(df)),
+        }
+
+    result = debit_credit_validation(debits, credits)
     result["rows"] = int(len(df))
     return {k: _plain(v) for k, v in result.items()}
 

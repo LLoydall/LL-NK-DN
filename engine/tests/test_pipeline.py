@@ -255,6 +255,43 @@ def test_assert_balance_fail():
 
 
 # =========================================================
+# assert_debit_credit GROUP_BY
+# =========================================================
+
+def _grouped_df():
+    # batch B1 foots (100 = 60 + 40), batch B2 does not (50 vs 0).
+    return pd.DataFrame({
+        "Legal Entity": ["E1", "E1", "E1"],
+        "Batch ID": ["B1", "B1", "B2"],
+        "debit": [100.0, 0.0, 50.0],
+        "credit": [60.0, 40.0, 0.0],
+    })
+
+
+def test_assert_debit_credit_group_by_finds_unbalanced_group():
+    checks = OPERATOR_IMPL["assert_debit_credit"](
+        _grouped_df(), "debit", "credit", group_by=["Legal Entity", "Batch ID"]
+    )
+    assert checks["status"] == "FAIL"
+    assert checks["groups"] == 2
+    assert checks["unbalanced"] == 1
+    example = checks["examples"][0]
+    assert example["group"] == {"Legal Entity": "E1", "Batch ID": "B2"}
+    assert example["difference"] == 50.0
+
+
+def test_assert_debit_credit_group_by_passes_when_all_groups_foot():
+    df = _grouped_df()
+    df.loc[2, "credit"] = 50.0
+    checks = OPERATOR_IMPL["assert_debit_credit"](
+        df, "debit", "credit", group_by=["Batch ID"]
+    )
+    assert checks["status"] == "PASS"
+    assert checks["unbalanced"] == 0
+    assert checks["examples"] == []
+
+
+# =========================================================
 # LOOKUP VALUE-KEY + DUPLICATE-COLUMN GUARDS
 # =========================================================
 
@@ -289,6 +326,81 @@ def test_duplicate_columns_error_and_skip_dependents(fake_read_source):
     assert "duplicate column(s): Credit" in steps["ren"]["error"]
     # Dependents of the failed step are skipped, not fed the broken frame.
     assert steps["chk"]["status"] == "skipped"
+
+
+def test_rename_on_collision_replace_overwrites():
+    df = pd.DataFrame({
+        "Trans Type": ["source-a", "source-b"],
+        "New Trans Type": ["mapped-a", "mapped-b"],
+        "Other": [1, 2],
+    })
+    out = OPERATOR_IMPL["rename"](
+        df, {"New Trans Type": "Trans Type"}, on_collision="replace"
+    )
+    assert list(out.columns) == ["Trans Type", "Other"]
+    assert out["Trans Type"].tolist() == ["mapped-a", "mapped-b"]
+
+
+def test_rename_default_keeps_duplicates_for_the_runner_guard():
+    df = pd.DataFrame({"a": [1], "b": [2]})
+    out = OPERATOR_IMPL["rename"](df, {"b": "a"})
+    assert not out.columns.is_unique  # runner turns this into a step error
+
+
+def test_rename_replace_still_rejected_when_mapping_values_collide():
+    doc = _valid_pipeline()
+    doc["steps"][1] = {
+        "id": "ren", "op": "rename",
+        "params": {"columns": {"Debit": "amount", "Credit": "amount"},
+                   "on_collision": "replace"},
+    }
+    errors = validate_pipeline(doc)
+    assert any("duplicate column(s): amount" in e for e in errors)
+
+
+# =========================================================
+# BEST-ATTEMPT OUTPUT
+# =========================================================
+
+def test_output_is_the_last_transform_frame(fake_read_source):
+    result = run_pipeline(_e2e_pipeline())
+    output = result["output"]
+    # The e2e pipeline ends with a terminal; the final frame comes from the
+    # last transform ("label").
+    assert output["step"] == "label"
+    assert output["complete"] is True
+    assert output["rowCount"] == 2
+    assert "label" in output["columns"]
+    assert " -> " in output["rows"][0]["label"]
+
+
+def test_output_falls_back_to_last_good_frame(fake_read_source):
+    doc = {
+        "steps": [
+            {"id": "read", "op": "read_sheet",
+             "params": {"source": "fake.xlsx", "sheet": "GL"}},
+            {"id": "ren", "op": "rename",
+             "params": {"columns": {"Debit": "Credit"}}},
+        ]
+    }
+    result = run_pipeline(doc)
+    output = result["output"]
+    assert output["step"] == "read"
+    assert output["complete"] is False
+    assert output["rowCount"] == 2
+    assert output["rows"][0]["Legal Entity"] == "Chalbury Co-Invest L.P."
+
+
+def test_output_is_null_when_nothing_produced():
+    doc = {
+        "steps": [
+            {"id": "read", "op": "read_sheet",
+             "params": {"source": "no/such/file.xlsx", "sheet": "GL"}},
+        ]
+    }
+    result = run_pipeline(doc)
+    assert result["steps"][0]["status"] == "error"
+    assert result["output"] is None
 
 
 # =========================================================

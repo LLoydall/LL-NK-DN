@@ -2,6 +2,7 @@
 # runtime reload of the crosswalk tables (/data/* endpoints).
 
 import io
+import os
 
 import pandas as pd
 import pytest
@@ -92,6 +93,31 @@ def test_uploaded_workbook_wins_over_dataset_file(monkeypatch, tmp_path):
 
     frame = operators.read_source("same.xlsx", "GL", 10)
     assert frame["Legal Entity"].tolist() == ["Uploaded Entity Ltd"] * 2
+
+
+def test_read_source_row_cap_and_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(mp, "UPLOADS_DIR", tmp_path / "none")
+    monkeypatch.setattr(mp, "DATA_DIR", tmp_path)
+    operators._READ_CACHE.clear()
+
+    path = tmp_path / "ten.xlsx"
+    pd.DataFrame({"n": range(10)}).to_excel(path, sheet_name="GL", index=False)
+
+    # Row cap is applied at parse time.
+    frame = operators.read_source("ten.xlsx", "GL", 3)
+    assert frame["n"].tolist() == [0, 1, 2]
+
+    # Same (path, sheet, max_rows) with unchanged mtime -> cached copy.
+    again = operators.read_source("ten.xlsx", "GL", 3)
+    assert again["n"].tolist() == [0, 1, 2]
+
+    # A changed file invalidates the cache (mtime bumped explicitly: some
+    # filesystems have coarse mtime granularity).
+    pd.DataFrame({"n": range(100, 110)}).to_excel(path, sheet_name="GL", index=False)
+    future = path.stat().st_mtime + 10
+    os.utime(path, (future, future))
+    fresh = operators.read_source("ten.xlsx", "GL", 3)
+    assert fresh["n"].tolist() == [100, 101, 102]
 
 
 def test_upload_sanitizes_path_parts(uploads_dir):

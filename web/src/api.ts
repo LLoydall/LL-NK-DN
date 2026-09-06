@@ -88,6 +88,13 @@ export interface PipelineRunResponse {
   ok: boolean;
   steps?: PipelineStepResult[];
   errors?: string[];
+  output?: {
+    step: string;
+    complete: boolean;
+    rowCount: number;
+    columns: string[];
+    rows: Array<Record<string, unknown>>;
+  } | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

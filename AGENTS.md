@@ -54,7 +54,10 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
     via `GET /operators` and injected into the LLM prompt), `validate_pipeline`,
     `run_pipeline` (JSON step-DAG interpreter; `uses` may only reference earlier
     steps). Endpoints: `GET /operators`, `POST /pipeline/validate`,
-    `POST /pipeline/run` (row-capped samples per step).
+    `POST /pipeline/run` (row-capped samples per step, plus an `output` object:
+    the best attempt at the final data — the last frame-producing step's rows,
+    falling back to the most recent successful frame with `complete: false`
+    when a step errored).
   - Upload endpoints: `POST /data/upload?name=&as_mapping=` (raw bytes; stores
     under `UPLOADS_DIR`, optionally reloads crosswalk tables),
     `GET /data/uploads`, `DELETE /data/uploads`.
