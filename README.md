@@ -1,5 +1,7 @@
 # LL-NK-DN — YLookup Hackathon Monorepo
 
+Submission video link: https://docs.google.com/videos/u/0/d/1GSJAUNAh37_1qyZ8YbcU5e92Z_eElMSgWZW5sXyDj0Y/play?usp=chrome_extension_sharing
+
 Pipeline for migrating an investor-level GL into a target fund-accounting system's
 loader format (dataset `sample-data-and-call-transcripts/02-investor-level-gl-to-loader`):
 
