@@ -97,6 +97,21 @@ export interface PipelineRunResponse {
   } | null;
 }
 
+/** Result of diffing the pipeline's output against the trusted reference mapping. */
+export interface KnownMappingValidation {
+  ok: boolean;
+  status?: string;
+  errors?: string[];
+  reason?: string;
+  rows_checked?: number;
+  columns_checked?: string[];
+  mismatch_count?: number;
+  mismatches?: Array<{ row: number; column: string; actual: unknown; expected: unknown }>;
+  pipeline_rows?: number;
+  expected_rows?: number;
+  missing_columns?: string[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // FormData bodies must not get a JSON content-type — the browser sets the
   // multipart boundary itself.
@@ -139,6 +154,11 @@ export const api = {
     request<PipelineRunResponse>("/api/pipeline/run", {
       method: "POST",
       body: JSON.stringify({ pipeline, maxRows }),
+    }),
+  validateAgainstKnownMapping: (pipeline: PipelineDoc, knownMappingFunction: string, maxRows?: number) =>
+    request<KnownMappingValidation>("/api/pipeline/validate-against-known-mapping", {
+      method: "POST",
+      body: JSON.stringify({ pipeline, knownMappingFunction, maxRows }),
     }),
   reviewCheck: (payload: unknown) =>
     request<ReviewCheckResponse>("/api/review/check", { method: "POST", body: JSON.stringify({ payload }) }),

@@ -13,7 +13,7 @@ import {
   type NodeProps,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { api, type ChatHistoryMessage, type CorpusCategory, type IngestMode, type PipelineRunResponse, type PipelineSketchResponse, type PipelineStepResult, type SourceRef, type StatusResponse } from "./api";
+import { api, type ChatHistoryMessage, type CorpusCategory, type IngestMode, type KnownMappingValidation, type PipelineDoc, type PipelineRunResponse, type PipelineSketchResponse, type PipelineStepResult, type SourceRef, type StatusResponse } from "./api";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -60,10 +60,10 @@ export default function App() {
     <div className="layout">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">Y</span>
+          <span className="brand-mark">✌️</span>
           <div>
-            <h1>YLookup</h1>
-            <p>GL → loader migration assistant</p>
+            <h1>Migration Reviewer</h1>
+            <p>GL → loader migration review tools</p>
           </div>
         </div>
         <IngestPanel onIngested={refreshStatus} />
@@ -138,9 +138,6 @@ export default function App() {
           </button>
           <button className={tab === "pipeline" ? "active" : ""} onClick={() => setTab("pipeline")}>
             Pipeline
-          </button>
-          <button className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
-            Review queue
           </button>
         </div>
         {tab === "ask" ? <AskTab status={status} /> : tab === "pipeline" ? <PipelineTab status={status} /> : <ReviewTab />}
@@ -494,6 +491,9 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<StepFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [flow, setFlow] = useState<ReactFlowInstance<StepFlowNode, Edge> | null>(null);
+  const hasRunResults = Object.keys(runResults).length > 0;
+  const [validationResults, setValidationResults] = useState<KnownMappingValidation | null>(null);
+  const [validating, setValidating] = useState(false);
 
   const onParamsChange = useCallback((stepId: string, text: string) => {
     setParamsDraft((prev) => ({ ...prev, [stepId]: text }));
@@ -567,6 +567,8 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
     if (!text || busy) return;
     setBusy(true);
     setError(null);
+    setRunResults({});
+    setValidationResults(null);
     try {
       setSketch(await api.sketchPipeline(text));
     } catch (err) {
@@ -577,9 +579,9 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
     }
   }
 
-  async function run() {
-    if (!sketch?.pipeline || running) return;
-    // Params are editable JSON; refuse to run with malformed steps.
+  // Params are editable JSON; refuse to run/validate with malformed steps.
+  function editedSteps(): PipelineDoc["steps"] | null {
+    if (!sketch?.pipeline) return null;
     const errors: Record<string, string> = {};
     const steps = sketch.pipeline.steps.map((s) => {
       try {
@@ -590,9 +592,16 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
       }
     });
     setParamsErrors(errors);
-    if (Object.keys(errors).length > 0) return;
+    return Object.keys(errors).length > 0 ? null : steps;
+  }
+
+  async function run() {
+    if (!sketch?.pipeline || running) return;
+    const steps = editedSteps();
+    if (!steps) return;
     setRunning(true);
     setError(null);
+    setValidationResults(null);
     try {
       const res: PipelineRunResponse = await api.runPipeline({ ...sketch.pipeline, steps }, maxRows);
       if (res.steps) {
@@ -603,6 +612,25 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
       setError(err instanceof Error ? err.message : "Run failed");
     } finally {
       setRunning(false);
+    }
+  }
+
+  // "Is that correct?" — the engine re-runs the pipeline and diffs its output
+  // against a trusted reference mapping (the deterministic right answer).
+  async function finalValidate() {
+    if (!sketch?.pipeline || validating) return;
+    const steps = editedSteps();
+    if (!steps) return;
+    setValidating(true);
+    setError(null);
+    try {
+      setValidationResults(
+        await api.validateAgainstKnownMapping({ ...sketch.pipeline, steps }, "gl_to_loader", maxRows),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Validation failed");
+    } finally {
+      setValidating(false);
     }
   }
 
@@ -632,9 +660,15 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
               disabled={running}
             />
             <button onClick={run} disabled={running}>
-              {running ? "Running…" : "Run on sample data"}
+              {running ? "Running…" : "Run 🏃"}
             </button>
           </>
+        )}
+        {/* "is that correct?" — diff the pipeline's output against the known mapping */}
+        {hasRunResults && (
+          <button onClick={() => finalValidate()} disabled={validating}>
+            {validating ? "Checking…" : "Is that correct?"}
+          </button>
         )}
       </div>
       {error && <div className="error-banner">{error}</div>}
@@ -676,6 +710,44 @@ function PipelineTab({ status }: { status: StatusResponse | null }) {
           </div>
         )}
       </div>
+      {validationResults && (
+        <div className="validation-modal" onClick={() => setValidationResults(null)} title="Click to dismiss">
+          <h1>{validationResults.ok ? "✅ The pipeline is correct!" : "❌ NO!"}</h1>
+          {validationResults.ok ? (
+            <p>{validationResults.rows_checked?.toLocaleString()} rows match the known mapping.</p>
+          ) : (
+            <div className="validation-detail">
+              {validationResults.errors?.map((e, i) => <p key={i}>{e}</p>)}
+              {validationResults.reason && <p>{validationResults.reason}</p>}
+              {validationResults.missing_columns && (
+                <p>Missing columns: {validationResults.missing_columns.join(", ")}</p>
+              )}
+              {validationResults.pipeline_rows != null && validationResults.expected_rows != null && (
+                <p>
+                  Pipeline produced {validationResults.pipeline_rows.toLocaleString()} rows, expected{" "}
+                  {validationResults.expected_rows.toLocaleString()}.
+                </p>
+              )}
+              {validationResults.mismatch_count != null && validationResults.mismatch_count > 0 && (
+                <>
+                  <p>
+                    {validationResults.mismatch_count.toLocaleString()} mismatched cells across{" "}
+                    {validationResults.rows_checked?.toLocaleString()} rows:
+                  </p>
+                  <ul>
+                    {validationResults.mismatches?.slice(0, 5).map((m, i) => (
+                      <li key={i}>
+                        row {m.row} · {m.column}: got {formatCell(m.actual)}, expected {formatCell(m.expected)}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+          <p className="hint">click to dismiss</p>
+        </div>
+      )}
       {sketch?.explanation && (
         <div className="pipeline-explanation">
           <h2>Why this pipeline</h2>

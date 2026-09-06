@@ -8,9 +8,11 @@ import {
   getOperators,
   runPipeline as engineRunPipeline,
   uploadData,
+  validateAgainstKnownMapping as engineValidateAgainstKnownMapping,
   validateMapping,
   validatePipeline,
   type EngineCheckResponse,
+  type PipelineKnownMappingValidation,
   type PipelineRunResponse,
 } from "./engineClient.js";
 import { chunkSheetDocuments } from "./ingestion/chunker.js";
@@ -231,7 +233,14 @@ export class MigrationService {
   async runPipeline(pipeline: unknown, maxRows?: number): Promise<PipelineRunResponse> {
     return engineRunPipeline(pipeline, maxRows);
   }
-  
+
+  async validateAgainstKnownMapping(
+    pipeline: unknown,
+    knownMappingFunction: string,
+    maxRows?: number,
+  ): Promise<PipelineKnownMappingValidation> {
+    return engineValidateAgainstKnownMapping(pipeline, knownMappingFunction, maxRows);
+  }
   async validateMapping(): Promise<{ ok: boolean; entity_result: unknown; coa_result: unknown }> {
     return validateMapping();
   }

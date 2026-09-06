@@ -129,6 +129,37 @@ export async function runPipeline(
   ).json()) as PipelineRunResponse;
 }
 
+/** Result of diffing a pipeline's final frame against a trusted mapping. */
+export interface PipelineKnownMappingValidation {
+  ok: boolean;
+  status?: string;
+  errors?: string[];
+  reason?: string;
+  rows_checked?: number;
+  columns_checked?: string[];
+  mismatch_count?: number;
+  mismatches?: Array<{ row: number; column: string; actual: unknown; expected: unknown }>;
+  pipeline_rows?: number;
+  expected_rows?: number;
+  missing_columns?: string[];
+}
+
+/** Re-run the pipeline engine-side and diff its output against a trusted
+ * reference mapping (the deterministic "right answer"). */
+export async function validateAgainstKnownMapping(
+  pipeline: unknown,
+  knownMappingFunction: string,
+  maxRows?: number,
+): Promise<PipelineKnownMappingValidation> {
+  return (await (
+    await engineFetch(
+      "/pipeline/validate-against-known-mapping",
+      postJson({ pipeline, max_rows: maxRows, known_mapping_function: knownMappingFunction }),
+      ENGINE_SLOW_TIMEOUT_MS,
+    )
+  ).json()) as PipelineKnownMappingValidation;
+}
+
 /**
  * Push a workbook's bytes to the engine so pipelines can verify against it
  * (read_sheet resolves uploaded workbooks before the mounted dataset).

@@ -34,7 +34,9 @@ from fastapi import FastAPI, HTTPException, Request
 from app.deterministic_layer import balance_reconciliation, debit_credit_validation, validate_mapping, validate_coa_mapping
 from pydantic import BaseModel
 from app import mapping as mp
+from app.known_mappings import KNOWN_MAPPINGS
 from app.pipeline import OPERATOR_CATALOG, run_pipeline, validate_pipeline
+from app.validate_pipeline import validate_pipeline_against_known_mapping
 app = FastAPI(title="ylookup-engine", version="0.1.0")
 
 
@@ -99,10 +101,10 @@ class PipelineRunRequest(BaseModel):
     pipeline: dict[str, Any]
     max_rows: int = 200
 
-# class PipelineValidateAgainstKnownMappingRequest(BaseModel):
-#     pipeline: dict[str, Any]
-#     max_rows: int = 200
-#     known_mapping_function: str
+class PipelineValidateAgainstKnownMappingRequest(BaseModel):
+    pipeline: dict[str, Any]
+    max_rows: int = 200
+    known_mapping_function: str = "gl_to_loader"
 
 
 @app.get("/operators")
@@ -116,10 +118,18 @@ def pipeline_validate(request: PipelineValidateRequest) -> dict[str, Any]:
     errors = validate_pipeline(request.pipeline)
     return {"ok": not errors, "errors": errors}
 
-# @app.post("/pipeline/validate-against-known-mapping")
-# def pipeline_validate_against_known_mapping(request: PipelineValidateAgainstKnownMappingRequest) -> dict[str, Any]:
-#     errors = validate_pipeline_against_known_mapping(request.pipeline, request.max_rows, request.known_mapping_function)
-#     return {"ok": not errors, "errors": errors}
+@app.post("/pipeline/validate-against-known-mapping")
+def pipeline_validate_against_known_mapping(request: PipelineValidateAgainstKnownMappingRequest) -> dict[str, Any]:
+    known_mapping = KNOWN_MAPPINGS.get(request.known_mapping_function)
+    if known_mapping is None:
+        raise HTTPException(
+            404,
+            f"unknown known-mapping function {request.known_mapping_function!r}; "
+            f"available: {sorted(KNOWN_MAPPINGS)}",
+        )
+    return validate_pipeline_against_known_mapping(
+        request.pipeline, request.max_rows, known_mapping
+    )
 
 @app.post("/pipeline/run")
 def pipeline_run(request: PipelineRunRequest) -> dict[str, Any]:

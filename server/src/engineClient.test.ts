@@ -6,6 +6,7 @@ import {
   getOperators,
   runPipeline,
   uploadData,
+  validateAgainstKnownMapping,
   validatePipeline,
 } from "./engineClient.js";
 
@@ -105,6 +106,23 @@ describe("pipeline endpoints", () => {
       }),
     );
     await expect(runPipeline(pipeline)).rejects.toBeInstanceOf(EngineUnavailableError);
+  });
+
+  it("validateAgainstKnownMapping POSTs the pipeline and mapping name", async () => {
+    const engineBody = { ok: true, status: "PASS", rows_checked: 50, mismatch_count: 0 };
+    const fetchMock = vi.fn(async () => jsonResponse(engineBody));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await validateAgainstKnownMapping(pipeline, "gl_to_loader", 50);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("http://localhost:8081/pipeline/validate-against-known-mapping");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      pipeline,
+      max_rows: 50,
+      known_mapping_function: "gl_to_loader",
+    });
+    expect(result).toEqual(engineBody);
   });
 });
 

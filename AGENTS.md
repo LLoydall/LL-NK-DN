@@ -58,6 +58,11 @@ RAG (find mapping rules/crosswalks) → Engine (deterministic checks) → LLM (e
     the best attempt at the final data — the last frame-producing step's rows,
     falling back to the most recent successful frame with `complete: false`
     when a step errored).
+  - `app/validate_pipeline.py` + `app/known_mappings.py` — `POST /pipeline/validate-against-known-mapping`
+    re-executes a pipeline and diffs its final frame against a trusted
+    reference mapping (a named function in `KNOWN_MAPPINGS`, e.g.
+    `gl_to_loader`) — the deterministic "right answer" behind the UI's
+    "Is that correct?" button.
   - Upload endpoints: `POST /data/upload?name=&as_mapping=` (raw bytes; stores
     under `UPLOADS_DIR`, optionally reloads crosswalk tables),
     `GET /data/uploads`, `DELETE /data/uploads`.

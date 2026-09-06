@@ -43,6 +43,12 @@ const pipelineRunSchema = z.object({
   maxRows: z.number().int().min(1).max(10_000).optional(),
 });
 
+const pipelineValidateKnownMappingSchema = z.object({
+  pipeline: z.unknown(),
+  knownMappingFunction: z.string().min(1).max(200),
+  maxRows: z.number().int().min(1).max(10_000).optional(),
+});
+
 export function createApp(service: MigrationService): Express {
   const app = express();
   app.disable("x-powered-by");
@@ -207,6 +213,31 @@ export function createApp(service: MigrationService): Express {
         return;
       }
       const message = error instanceof Error ? error.message : "Pipeline run failed";
+      res.status(502).json({ error: message });
+    }
+  });
+
+  app.post("/api/pipeline/validate-against-known-mapping", async (req: Request, res: Response) => {
+    const parsed = pipelineValidateKnownMappingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+      return;
+    }
+    try {
+      res.json(
+        await service.validateAgainstKnownMapping(
+          parsed.data.pipeline,
+          parsed.data.knownMappingFunction,
+          parsed.data.maxRows,
+        ),
+      );
+    } catch (error) {
+      logError("pipeline_validate_known_mapping_failed", error);
+      if (error instanceof EngineUnavailableError) {
+        res.status(503).json({ error: error.message });
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Pipeline validation failed";
       res.status(502).json({ error: message });
     }
   });
