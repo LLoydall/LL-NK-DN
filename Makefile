@@ -66,4 +66,5 @@ docker-build: ## Build app and engine images locally
 
 .PHONY: deploy
 deploy: ## Build + push + deploy to GKE via Cloud Build
-	gcloud builds submit --project=$(PROJECT) --service-account=$(BUILD_SA)
+	gcloud builds submit --project=$(PROJECT) --service-account=$(BUILD_SA) \
+	  --substitutions=COMMIT_SHA=$(shell git rev-parse HEAD)

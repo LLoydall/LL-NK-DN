@@ -25,6 +25,7 @@ export async function chunkSheetDocuments(sheetDocuments: SheetDocument[]): Prom
           metadata: {
             sheet: sheetDoc.metadata.sheet,
             part: sheetDoc.metadata.part,
+            category: sheetDoc.metadata.category,
             chunkIndex: index,
           },
         }),

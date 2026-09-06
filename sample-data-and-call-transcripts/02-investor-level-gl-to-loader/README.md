@@ -51,3 +51,9 @@ Preserved from the original, do not treat as errors:
 
 Amounts, dates and quantities are untouched. Every amount column sums identically to the source, and
 the cross-file joins between the GL and the loader still resolve.
+
+## Categories
+
+- `input` — `sample-data-and-call-transcripts/02-investor-level-gl-to-loader/source/Investor-Level GL - Q2 activity - all entities (anonymised).xlsx` containing the original investor-level GL data.
+- `output` — `sample-data-and-call-transcripts/02-investor-level-gl-to-loader/source/Phase I loader - sample (anonymised).xlsx` the shape the output has to take, a target-format artifact, not rules..
+- `mapping` — `sample-data-and-call-transcripts/02-investor-level-gl-to-loader/output/Tranche 1 - reference and verified loader v4c (anonymised).xlsx` containing the mapping tables used to build the upload template.

@@ -29,7 +29,7 @@ const GraphState = Annotation.Root({
 
 export interface ChatResult {
   answer: string;
-  sources: Array<{ sheet: string; score: number }>;
+  sources: Array<{ sheet: string; category: string; score: number }>;
   model: string;
   latencyMs: number;
   noRelevantContext: boolean;
@@ -40,11 +40,12 @@ export interface ChatGraphDeps {
   model: BaseChatModel;
 }
 
-function formatContext(hits: SearchHit[]): string {
+export function formatContext(hits: SearchHit[]): string {
   let budget = config.MAX_CONTEXT_CHARS;
   const blocks: string[] = [];
   for (const hit of hits) {
-    const block = `--- ${String(hit.document.metadata.sheet)} (relevance ${hit.score.toFixed(2)}) ---\n${hit.document.pageContent}`;
+    const category = String(hit.document.metadata.category ?? "unknown");
+    const block = `--- [${category}] ${String(hit.document.metadata.sheet)} (relevance ${hit.score.toFixed(2)}) ---\n${hit.document.pageContent}`;
     if (block.length > budget) break;
     blocks.push(block);
     budget -= block.length;
@@ -119,12 +120,22 @@ export function buildChatGraph(deps: ChatGraphDeps) {
     const sourceLabel = deps.index.indexMetadata?.sourceLabel ?? "the ingested workbook";
     const history = state.history.slice(-config.MAX_HISTORY_MESSAGES);
     const chain = ANSWER_PROMPT.pipe(deps.model);
-    const response = await chain.invoke({
-      sourceLabel,
-      context,
-      history,
-      question: state.question,
-    });
+    let response;
+    try {
+      response = await chain.invoke({
+        sourceLabel,
+        context,
+        history,
+        question: state.question,
+      });
+    } catch (error) {
+      // See pipeline.ts: label model-call failures so quota/retry storms
+      // don't surface as bare TypeErrors.
+      throw new Error(
+        `the chat model call failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     const answer =
       typeof response.content === "string"
         ? response.content
@@ -165,6 +176,7 @@ export async function runChat(
   const hits: SearchHit[] = result.hits ?? [];
   const sources = hits.map((h) => ({
     sheet: String(h.document.metadata.sheet),
+    category: String(h.document.metadata.category ?? "unknown"),
     score: Math.round(h.score * 1000) / 1000,
   }));
   log("chat_answer", {

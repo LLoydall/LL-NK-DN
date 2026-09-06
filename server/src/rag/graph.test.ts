@@ -18,7 +18,7 @@ describe("chat graph", () => {
       {
         document: new Document({
           pageContent: "Sheet: LE Mapping\n\nSource LE: Fund A | Target LE: LE-001",
-          metadata: { sheet: "LE Mapping", part: 1, chunkIndex: 0 },
+          metadata: { sheet: "LE Mapping", part: 1, category: "mapping", chunkIndex: 0 },
         }),
         score: 0.9,
       },
@@ -31,7 +31,7 @@ describe("chat graph", () => {
 
     const result = await runChat(graph, "what does Fund A map to?", []);
     expect(result.answer).toBe("Fund A maps to LE-001 via [LE Mapping].");
-    expect(result.sources).toEqual([{ sheet: "LE Mapping", score: 0.9 }]);
+    expect(result.sources).toEqual([{ sheet: "LE Mapping", category: "mapping", score: 0.9 }]);
     expect(result.noRelevantContext).toBe(false);
     expect(result.model).toBeTruthy();
     // Original question + two rewrite variants; the duplicate hit is merged.

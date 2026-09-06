@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { chunkSheetDocuments } from "./chunker.js";
-import type { SheetDocument } from "./xlsx.js";
+import type { CorpusCategory, SheetDocument } from "./xlsx.js";
 
-function makeDoc(sheet: string, content: string, part = 1): SheetDocument {
-  return { content, metadata: { sheet, part } };
+function makeDoc(
+  sheet: string,
+  content: string,
+  part = 1,
+  category: CorpusCategory = "mapping",
+): SheetDocument {
+  return { content, metadata: { sheet, part, category } };
 }
 
 describe("chunkSheetDocuments", () => {
@@ -14,7 +19,12 @@ describe("chunkSheetDocuments", () => {
     expect(docs).toHaveLength(1);
     expect(docs[0].pageContent).toContain("Sheet: LE Mapping");
     expect(docs[0].pageContent).toContain("A: 1 | B: 2");
-    expect(docs[0].metadata).toMatchObject({ sheet: "LE Mapping", part: 1, chunkIndex: 0 });
+    expect(docs[0].metadata).toMatchObject({
+      sheet: "LE Mapping",
+      part: 1,
+      category: "mapping",
+      chunkIndex: 0,
+    });
   });
 
   it("splits large sheet documents into multiple ordered chunks", async () => {
@@ -37,5 +47,13 @@ describe("chunkSheetDocuments", () => {
     expect(docs).toHaveLength(2);
     expect(docs.map((d) => d.metadata.sheet)).toEqual(["LE Mapping", "Deal Mapping"]);
     expect(docs[1].metadata.part).toBe(2);
+  });
+
+  it("carries the sheet category onto every chunk", async () => {
+    const docs = await chunkSheetDocuments([
+      makeDoc("Investor-Level GL", "Legal Entity: Fund A | Amount: 100", 1, "input"),
+    ]);
+    expect(docs).toHaveLength(1);
+    expect(docs[0].metadata.category).toBe("input");
   });
 });
